@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+backend/.shipsafe-data/
+backend/demo-repo/
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+.DS_Store
+# Local Claude review handoff artifacts; may contain proprietary source diffs.
+shipsafe-handoff-*/
+claude-review.json
+review-input.json

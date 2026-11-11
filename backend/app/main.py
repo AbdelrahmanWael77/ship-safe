@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
-import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,10 +11,12 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, ValidationError
 
 from .ai_handoff import AIReviewImport, MAX_IMPORT_BYTES, context_digest, handoff_zip, saved_review, validate_review_binding
+from .config import load_settings
+from .db import migrate, session
 from .demo_seed import DEMO_BRANCHES, ensure_demo_repo
-from .scanner import ScanError, git, scan_repository
-
-BACKEND_DIR = Path(__file__).resolve().parents[1]
+from .errors import RepositoryAccessDenied, ScanError
+from .providers import LocalGitProvider
+from .scanner import git, scan_changes
 
 
 class ScanRequest(BaseModel):
@@ -30,33 +30,19 @@ def create_app(
     db_file: Path | None = None,
     allowed_root: Path | None = None,
 ) -> FastAPI:
-    demo_root = (demo_root or Path(os.environ.get("SHIPSAFE_DEMO_DIR", BACKEND_DIR / "demo-repo"))).resolve()
-    db_file = (db_file or Path(os.environ.get("SHIPSAFE_DB_PATH", BACKEND_DIR / ".shipsafe-data" / "scans.db"))).resolve()
-    # Default: scan ONLY the synthetic repository. To enable other repos, set
-    # SHIPSAFE_ALLOWED_ROOT to a directory you explicitly trust.
-    allowed_root = (allowed_root or Path(os.environ.get("SHIPSAFE_ALLOWED_ROOT", str(demo_root)))).resolve()
+    settings = load_settings(demo_root=demo_root, db_file=db_file, allowed_root=allowed_root)
+    demo_root, db_file = settings.demo_dir, settings.db_path
+    # Deny by default: only the synthetic repository is scannable unless
+    # SHIPSAFE_ALLOWED_ROOT names a directory you explicitly trust.
+    provider = LocalGitProvider(settings.allowed_roots)
 
     def connection():
-        conn = sqlite3.connect(db_file)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return session(db_file)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         ensure_demo_repo(demo_root)
-        db_file.parent.mkdir(parents=True, exist_ok=True)
-        with connection() as conn:
-            conn.execute("""CREATE TABLE IF NOT EXISTS scans (
-                id TEXT PRIMARY KEY, created_at TEXT NOT NULL, report_json TEXT NOT NULL
-            )""")
-            conn.execute("""CREATE TABLE IF NOT EXISTS ai_reviews (
-                id TEXT PRIMARY KEY,
-                scan_id TEXT NOT NULL,
-                imported_at TEXT NOT NULL,
-                review_json TEXT NOT NULL,
-                FOREIGN KEY(scan_id) REFERENCES scans(id)
-            )""")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_reviews_scan ON ai_reviews(scan_id, imported_at)")
+        migrate(db_file)
         yield
 
     app = FastAPI(title="ShipSafe API", version="0.2.0", lifespan=lifespan)
@@ -81,15 +67,12 @@ def create_app(
 
     @app.post("/api/scans", status_code=201)
     def create_scan(body: ScanRequest):
-        repo = Path(body.repository_path).expanduser().resolve() if body.repository_path else demo_root
-        # Permit the explicit root itself or repositories under it, never unrelated paths.
-        if not repo.is_relative_to(allowed_root):
-            raise HTTPException(
-                status_code=403,
-                detail="Repository is outside SHIPSAFE_ALLOWED_ROOT. Scanning other paths requires explicit local configuration.",
-            )
         try:
-            report = scan_repository(repo, body.base_ref, body.head_ref)
+            # The provider permits an allowed root itself or repositories under it, never unrelated paths.
+            repository = provider.get_repository(body.repository_path or str(demo_root))
+            report = scan_changes(provider, repository, body.base_ref, body.head_ref)
+        except RepositoryAccessDenied as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ScanError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         with connection() as conn:
@@ -166,7 +149,7 @@ def create_app(
         try:
             data = json.loads(b"".join(parts))
             validated = AIReviewImport.model_validate(data)
-        except (ValueError, UnicodeDecodeError, ValidationError) as exc:
+        except (ValueError, ValidationError, RecursionError) as exc:
             raise HTTPException(422, detail=f"Invalid Claude review JSON: {str(exc)[:700]}") from exc
         try:
             validate_review_binding(validated, report)

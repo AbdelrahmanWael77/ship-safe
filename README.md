@@ -19,7 +19,7 @@ Prerequisites: Python 3.11+, Git, and Node.js 20.19+ (or 22+) with npm.
 ### 1. Install backend dependencies
 
 ```bash
-cd shipsafe-project
+# from the repository root
 python -m venv .venv
 # macOS/Linux:
 source .venv/bin/activate
@@ -156,7 +156,11 @@ export SHIPSAFE_ALLOWED_ROOT=/absolute/path/to/trusted/workspace
 
 Restart the API, then POST to `/api/scans` with `repository_path`, `base_ref`, and `head_ref`. The repository must be inside that explicitly permitted directory. For Windows, use `$env:SHIPSAFE_ALLOWED_ROOT = 'C:\path\to\trusted\workspace'`.
 
-To change the SQLite database path, set `SHIPSAFE_DB_PATH`. To change where demo files are generated, set `SHIPSAFE_DEMO_DIR`.
+The synthetic demo repository stays scannable alongside an authorized directory. A drive or filesystem root is refused at startup.
+
+To change the SQLite database path, set `SHIPSAFE_DB_PATH`. To change where demo files are generated, set `SHIPSAFE_DEMO_DIR`. These can also go in a root `.env` file (copy `.env.example`), which `python scripts/dev.py` loads.
+
+Full settings reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md). Components, API, and security boundaries: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Architecture
 
@@ -207,6 +211,6 @@ This is a **working foundation**, not a production-ready security platform:
 6. Export a **Claude handoff ZIP**, review it with your own logged-in Claude Code session, and import the resulting JSON into the **Claude Review** page.
 7. Show the AI summary, proposed risks, test ideas, and limitations without confusing them with static findings.
 8. Export a JSON evidence report.
-7. Show test results and limitations honestly to the judges.
+9. Show test results and limitations honestly to the judges.
 
 MIT-style usage permission for demonstration and internal evaluation; do your own licensing review before distribution.

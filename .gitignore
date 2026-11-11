@@ -12,3 +12,7 @@ frontend/*.tsbuildinfo
 shipsafe-handoff-*/
 claude-review.json
 review-input.json
+# Local configuration. Copy .env.example to .env; never commit real values.
+.env
+.env.*
+!.env.example

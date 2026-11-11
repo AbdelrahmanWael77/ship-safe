@@ -3,54 +3,38 @@ from __future__ import annotations
 
 import ast
 import re
-import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from .errors import ScanError
+from .providers.base import MAX_CHANGED_FILES, ChangeProvider, RepositoryRef, valid_ref
+from .providers.local_git import LocalGitProvider, run_git as git
 
-class ScanError(ValueError):
-    pass
+__all__ = ["ScanError", "git", "valid_ref", "scan_changes", "scan_repository", "analyze_risks"]
+
+#: Lines of each file's patch kept in a stored report.
+PATCH_PREVIEW_LINES = 140
+#: Files at the head commit inspected for imports of changed modules.
+MAX_IMPORT_SCAN_FILES = 250
 
 
-def git(repo: Path, *args: str, allow_error: bool = False) -> str:
+def _parse(source: str) -> ast.AST | None:
+    """Parse untrusted Python source; None if it cannot be parsed safely.
+
+    Besides syntax errors, hostile or generated input can exhaust the parser
+    (RecursionError/MemoryError) or contain NUL bytes (ValueError on 3.11).
+    """
     try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), *args], text=True,
-            capture_output=True, timeout=20, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ScanError(f"Git is unavailable or timed out: {exc}") from exc
-    if proc.returncode != 0:
-        if allow_error:
-            return ""
-        raise ScanError(proc.stderr.strip()[:350] or "Git command failed")
-    return proc.stdout
-
-
-def valid_ref(ref: str) -> bool:
-    return bool(
-        ref and len(ref) <= 150 and re.fullmatch(r"[a-zA-Z0-9_./-]+", ref)
-        and not ref.startswith("-") and ".." not in ref and "//" not in ref
-        and not ref.endswith("/") and not ref.endswith(".lock")
-    )
-
-
-def commit_sha(repo: Path, ref: str) -> str:
-    if not valid_ref(ref):
-        raise ScanError(f"Invalid Git reference: {ref!r}")
-    return git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}").strip()
-
-
-def tree_file(repo: Path, sha: str, rel_path: str) -> str:
-    return git(repo, "show", f"{sha}:{rel_path}", allow_error=True)
+        return ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return None
 
 
 def py_functions(text: str, changed_lines: set[int]) -> list[str]:
-    try:
-        tree = ast.parse(text)
-    except (SyntaxError, ValueError):
+    tree = _parse(text)
+    if tree is None:
         return []
     names = set()
     for node in ast.walk(tree):
@@ -62,9 +46,8 @@ def py_functions(text: str, changed_lines: set[int]) -> list[str]:
 
 
 def response_keys(source: str) -> set[str]:
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
+    tree = _parse(source)
+    if tree is None:
         return set()
     keys = set()
     for n in ast.walk(tree):
@@ -75,20 +58,20 @@ def response_keys(source: str) -> set[str]:
     return keys
 
 
-def import_dependencies(repo: Path, head_sha: str, changed_paths: list[str]) -> list[dict]:
-    files = git(repo, "ls-tree", "-r", "--name-only", head_sha).splitlines()
+def import_dependencies(
+    provider: ChangeProvider, repository: RepositoryRef, head_sha: str, changed_paths: list[str],
+) -> list[dict]:
+    files = provider.list_files(repository, head_sha)
     changed_modules = {
         path[:-3].replace("/", "."): path
         for path in changed_paths if path.endswith(".py")
     }
     direct = []
-    for path in files[:250]:
+    for path in files[:MAX_IMPORT_SCAN_FILES]:
         if not path.endswith(".py") or path in changed_paths:
             continue
-        source = tree_file(repo, head_sha, path)
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
+        tree = _parse(provider.read_file(repository, head_sha, path))
+        if tree is None:
             continue
         imports = set()
         for node in ast.walk(tree):
@@ -179,35 +162,38 @@ def analyze_risks(path: str, before: str, after: str, diff: str) -> list[dict]:
 
 
 def scan_repository(repo: Path, base: str, head: str) -> dict:
-    started = time.monotonic()
+    """Scan a local Git repository the caller has already authorized.
+
+    Kept for scripts and tests. The API goes through ``LocalGitProvider``
+    built from the configured allowlist and then calls :func:`scan_changes`.
+    """
     repo = repo.resolve()
-    if not (repo / ".git").exists():
-        raise ScanError("This path is not a local Git repository")
-    base_sha = commit_sha(repo, base)
-    head_sha = commit_sha(repo, head)
-    statuses = git(repo, "diff", "--name-status", "--no-renames", base_sha, head_sha, "--").splitlines()
-    numstat = {}
-    for row in git(repo, "diff", "--numstat", "--no-renames", base_sha, head_sha, "--").splitlines():
-        chunks = row.split("\t", 2)
-        if len(chunks) == 3:
-            a, d, name = chunks
-            numstat[name] = (int(a) if a.isdigit() else 0, int(d) if d.isdigit() else 0)
+    provider = LocalGitProvider([repo])
+    return scan_changes(provider, provider.get_repository(str(repo)), base, head)
+
+
+def scan_changes(provider: ChangeProvider, repository: RepositoryRef, base: str, head: str) -> dict:
+    """Scan orchestration: fetch a change set from any provider, run the static
+    heuristics, and build the report. Reads only; executes nothing.
+
+    The returned dict is the persisted report and the public ``Report`` API
+    type; its shape is unchanged from v0.2.
+    """
+    started = time.monotonic()
+    changes = provider.get_changes(repository, base, head, max_files=MAX_CHANGED_FILES)
+    base_sha, head_sha = changes.base_sha, changes.head_sha
     files = []
     findings = []
-    for row in statuses[:300]:
-        status, _, path = row.partition("\t")
-        if not path:
-            continue
-        delta = git(repo, "diff", "--no-ext-diff", "--unified=3", base_sha, head_sha, "--", path)
-        before = tree_file(repo, base_sha, path) if status != "A" and path.endswith(".py") else ""
-        after = tree_file(repo, head_sha, path) if status != "D" and path.endswith(".py") else ""
-        changed = _changed_new_lines(delta)
-        functions = py_functions(after, changed) if path.endswith(".py") else []
-        additions, deletions = numstat.get(path, (0, 0))
-        findings.extend(analyze_risks(path, before, after, delta))
+    for delta in changes.files:
+        path, status = delta.path, delta.status
+        is_python = path.endswith(".py")
+        before = provider.read_file(repository, base_sha, path) if status != "A" and is_python else ""
+        after = provider.read_file(repository, head_sha, path) if status != "D" and is_python else ""
+        functions = py_functions(after, _changed_new_lines(delta.patch)) if is_python else []
+        findings.extend(analyze_risks(path, before, after, delta.patch))
         files.append({
-            "path": path, "status": status, "additions": additions, "deletions": deletions,
-            "changed_functions": functions, "diff": "\n".join(delta.splitlines()[:140]),
+            "path": path, "status": status, "additions": delta.additions, "deletions": delta.deletions,
+            "changed_functions": functions, "diff": "\n".join(delta.patch.splitlines()[:PATCH_PREVIEW_LINES]),
         })
     severities = {"critical": 42, "high": 26, "medium": 12, "low": 4}
     risk_score = min(99, sum(severities[f["severity"]] for f in findings) + (3 if files else 0))
@@ -217,7 +203,7 @@ def scan_repository(repo: Path, base: str, head: str) -> dict:
         level = "No flagged patterns — review still required"
     else:
         level = "No changes detected"
-    impacted = import_dependencies(repo, head_sha, [f["path"] for f in files])
+    impacted = import_dependencies(provider, repository, head_sha, [f["path"] for f in files])
     test_suggestions = []
     suggestions = {
         "Security": "Verify a different user cannot access another user's invoice.",
@@ -231,7 +217,7 @@ def scan_repository(repo: Path, base: str, head: str) -> dict:
         })
     return {
         "id": str(uuid4()), "created_at": datetime.now(timezone.utc).isoformat(),
-        "repo_name": repo.name, "repository_path": str(repo), "base_ref": base,
+        "repo_name": repository.name, "repository_path": repository.location, "base_ref": base,
         "head_ref": head, "base_sha": base_sha[:12], "head_sha": head_sha[:12],
         "duration_ms": round((time.monotonic() - started) * 1000),
         "summary": {

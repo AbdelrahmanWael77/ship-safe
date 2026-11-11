@@ -4,6 +4,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from .errors import ConfigError
+
 BASE_FILES = {
     "README.md": """# LedgerLite (synthetic demo)
 
@@ -99,43 +101,90 @@ def _put(root: Path, rel_path: str, data: str) -> None:
     path.write_text(data, encoding="utf-8")
 
 
+INITIAL_COMMIT_SUBJECT = "Initial secure invoice service"
+
+# Each demo branch is exactly one commit on top of ``main`` that writes these files.
+DEMO_BRANCH_FILES = {
+    "feature/release-candidate": {
+        "app/auth.py": BAD_AUTH,
+        "app/pricing.py": BAD_PRICING,
+        "app/api.py": BAD_API,
+        "README.md": BASE_FILES["README.md"] + "\nRelease candidate: simplified invoice processing.\n",
+    },
+    "feature/auth-regression": {"app/auth.py": BAD_AUTH},
+    "feature/pricing-regression": {"app/pricing.py": BAD_PRICING},
+    "feature/api-breaking": {"app/api.py": BAD_API},
+    "feature/docs-only": {"README.md": BASE_FILES["README.md"] + "\nUpdated setup documentation.\n"},
+    "feature/safe-cleanup": {
+        "app/auth.py": BASE_FILES["app/auth.py"].replace(
+            "    return invoice\n", "    # Return only after the authorization guard passes.\n    return invoice\n"
+        )
+    },
+}
+
+
+def _commit_of(root: Path, ref: str) -> str | None:
+    """Full SHA of ``ref`` if it names a commit in this repository, else None."""
+    try:
+        return _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    except subprocess.CalledProcessError:
+        return None
+
+
+def _is_generated_demo(root: Path) -> bool:
+    """True when ``main``'s root commit is the one this module writes."""
+    first = _git(root, "log", "--reverse", "--format=%s", "main").splitlines()
+    return bool(first) and first[0] == INITIAL_COMMIT_SUBJECT
+
+
 def ensure_demo_repo(root: Path) -> Path:
+    """Create the synthetic LedgerLite repository, or repair a half-created one.
+
+    Seeding runs several ``git`` commands; if the process is interrupted part
+    way (for example Ctrl+C during the first API start), the directory is left
+    with ``.git`` present but branches missing. This function is idempotent:
+    a complete repository is not modified, missing or uncommitted demo
+    branches are rebuilt from ``main``, and a directory that is not the
+    generated demo is refused rather than written to.
+    """
     root = root.resolve()
-    if (root / ".git").exists():
-        return root
-    root.mkdir(parents=True, exist_ok=True)
-    _git(root, "init", "-b", "main")
+    if not (root / ".git").exists():
+        if root.exists() and any(root.iterdir()):
+            raise ConfigError(
+                f"Demo directory is not empty and is not a Git repository; refusing to initialise it: {root}"
+            )
+        root.mkdir(parents=True, exist_ok=True)
+        _git(root, "init", "-b", "main")
     _git(root, "config", "user.name", "ShipSafe Demo")
     _git(root, "config", "user.email", "demo@shipsafe.invalid")
-    for name, content in BASE_FILES.items():
-        _put(root, name, content)
-    _git(root, "add", ".")
-    _git(root, "commit", "-m", "Initial secure invoice service")
+    # Demo commits are synthetic; never let an inherited global setting ask for a signing key.
+    _git(root, "config", "commit.gpgsign", "false")
 
-    branches = {
-        "feature/release-candidate": {
-            "app/auth.py": BAD_AUTH,
-            "app/pricing.py": BAD_PRICING,
-            "app/api.py": BAD_API,
-            "README.md": BASE_FILES["README.md"] + "\nRelease candidate: simplified invoice processing.\n",
-        },
-        "feature/auth-regression": {"app/auth.py": BAD_AUTH},
-        "feature/pricing-regression": {"app/pricing.py": BAD_PRICING},
-        "feature/api-breaking": {"app/api.py": BAD_API},
-        "feature/docs-only": {"README.md": BASE_FILES["README.md"] + "\nUpdated setup documentation.\n"},
-        "feature/safe-cleanup": {
-            "app/auth.py": BASE_FILES["app/auth.py"].replace(
-                "    return invoice\n", "    # Return only after the authorization guard passes.\n    return invoice\n"
-            )
-        },
-    }
-    for branch, changes in branches.items():
-        _git(root, "checkout", "-b", branch, "main")
+    main_sha = _commit_of(root, "main")
+    if main_sha is None:
+        if _git(root, "rev-list", "--all", "--max-count=1"):
+            raise ConfigError(f"Demo directory holds a repository without the generated 'main'; refusing to modify it: {root}")
+        for name, content in BASE_FILES.items():
+            _put(root, name, content)
+        _git(root, "add", ".")
+        _git(root, "commit", "-q", "-m", INITIAL_COMMIT_SUBJECT)
+        main_sha = _commit_of(root, "main")
+    elif not _is_generated_demo(root):
+        raise ConfigError(f"Demo directory holds a repository that is not the generated demo; refusing to modify it: {root}")
+
+    repaired = False
+    for branch, changes in DEMO_BRANCH_FILES.items():
+        tip = _commit_of(root, branch)
+        if tip is not None and tip != main_sha:
+            continue  # branch exists and carries its commit
+        repaired = True
+        _git(root, "checkout", "-q", "-f", "-B", branch, "main")
         for name, content in changes.items():
             _put(root, name, content)
         _git(root, "add", ".")
-        _git(root, "commit", "-m", f"Demo: {branch.split('/')[-1].replace('-', ' ')}")
-    _git(root, "checkout", "main")
+        _git(root, "commit", "-q", "-m", f"Demo: {branch.split('/')[-1].replace('-', ' ')}")
+    if repaired:
+        _git(root, "checkout", "-q", "-f", "main")
     return root
 
 

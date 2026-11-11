@@ -33,7 +33,7 @@ Both servers bind to loopback. `scripts/dev.py` starts them with `--host 127.0.0
 | `scanner.py` | `scan_changes(provider, repository, base, head)` orchestration, `scan_repository(path, base, head)` convenience wrapper, AST helpers, three risk heuristics, report assembly. |
 | `ai_handoff.py` | `review_context()`, `context_digest()`, `handoff_zip()`, Pydantic import models, `validate_review_binding()`, `saved_review()`. |
 | `db.py` | `session()` context manager and forward-only `migrate()` keyed on `PRAGMA user_version`. |
-| `demo_seed.py` | `ensure_demo_repo()` creates `main` plus six branches; `DEMO_BRANCHES` metadata. |
+| `demo_seed.py` | `ensure_demo_repo()` creates or repairs `main` plus six branches; `DEMO_BRANCH_FILES` content, `DEMO_BRANCHES` metadata. |
 
 ## HTTP API
 
@@ -101,18 +101,18 @@ The UI can only choose among the demo repository's branches. Scanning another au
 
 ## Demo generator and settings
 
-`demo_seed.ensure_demo_repo()` runs at API startup. If the demo directory has no `.git`, it writes the LedgerLite files, commits them on `main`, and creates six branches, each one commit on top of `main`: `feature/release-candidate`, `feature/auth-regression`, `feature/pricing-regression`, `feature/api-breaking`, `feature/docs-only`, `feature/safe-cleanup`. These are the only Git writes ShipSafe ever makes, and only inside the demo directory. `GET /api/demo` serves `DEMO_BRANCHES` as the branch picker's data.
+`demo_seed.ensure_demo_repo()` runs at API startup. It writes the LedgerLite files, commits them on `main`, and creates six branches, each one commit on top of `main`: `feature/release-candidate`, `feature/auth-regression`, `feature/pricing-regression`, `feature/api-breaking`, `feature/docs-only`, `feature/safe-cleanup`. It is idempotent: a complete repository is left untouched, and a branch that is missing or has no commit of its own (a seed interrupted part way) is rebuilt from `main`. It refuses, with `ConfigError`, to touch a non-empty directory that is not a repository or a repository whose `main` does not start with the generated root commit, so a mis-set `SHIPSAFE_DEMO_DIR` cannot be written to. Demo commits are made with `commit.gpgsign=false` in the repository's own config. These are the only Git writes ShipSafe ever makes, and only inside the demo directory. `GET /api/demo` serves `DEMO_BRANCHES` as the branch picker's data.
 
 Settings are three optional `SHIPSAFE_*` environment variables plus the frontend's `VITE_API_BASE`; see `docs/CONFIGURATION.md`. No setting holds a secret.
 
 ## Tests
 
-Backend only, under `backend/tests` (66 tests). Each test builds its own demo repository and database in a pytest temp directory; none touches `backend/demo-repo` or the real `scans.db`.
+Backend only, under `backend/tests` (71 tests). Each test builds its own demo repository and database in a pytest temp directory; none touches `backend/demo-repo` or the real `scans.db`.
 
 | File | Tests | Covers |
 |---|---|---|
 | `test_scanner.py`, `test_ai_handoff.py` | 24 | The original v0.2 suite, unmodified: demo branches, findings per branch, allowlist, export, handoff ZIP, review import and rejection cases |
-| `test_phase1_regressions.py` | 27 | The Phase 1 defect fixes (textconv, encoding, file names, parser exhaustion, error codes), real commits and changed lines, docs-only, restart persistence, the scan leaves the repository unmodified |
+| `test_phase1_regressions.py` | 32 | The Phase 1 defect fixes (textconv, encoding, file names, parser exhaustion, error codes, interrupted demo seed), real commits and changed lines, docs-only, restart persistence, the scan leaves the repository unmodified |
 | `test_foundation.py` | 15 | Provider protocol conformance, orchestration over an in-memory provider, report shape pinned to the v0.2 example, settings and allowlist rules, CORS, migrations |
 
 There are no frontend unit tests and no lint step. The dashboard was exercised once in headless Chrome during Phase 1 (recorded in the session handoff); that script is not part of the repository.
@@ -166,7 +166,7 @@ Scan orchestration   scanner.scan_changes(provider: ChangeProvider, repository, 
 - Scans run synchronously in the request and spawn several `git` processes per changed file plus one per inspected Python file. About 0.5 s for the four-file demo scan on the Phase 1 Windows workstation; it will not scale to large diffs.
 - The 300-file cap is silent in the report (`ChangeSet.truncated` exists but is not surfaced), and patches are cut at 140 lines.
 - Reports keep only 12-character SHAs. Phase 2 commit binding needs the full SHA, which `ChangeSet` already carries.
-- `ensure_demo_repo` returns early if `.git` exists, so a half-created demo repository is never repaired; it also inherits global Git config (for example `commit.gpgsign`), and a failure there aborts startup with a traceback.
+- A failure inside `ensure_demo_repo` (for example Git missing from `PATH`) aborts startup with a raw traceback rather than a one-line message.
 - Heuristics are tuned to the demo: three rules, Python only, absolute imports only.
 - `GET /api/scans` parses every full report to build the summary list.
 - The API version string (`0.2.0`) is hard-coded in `main.py` and again in `App.tsx`.

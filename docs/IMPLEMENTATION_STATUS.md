@@ -7,7 +7,7 @@ Labels: IMPLEMENTED (code and passing tests exist), PARTIAL (works within stated
 | Capability | Status | Evidence or limit | Planned phase |
 |---|---|---|---|
 | Local Git diff scanning through the API | IMPLEMENTED | `backend/tests`; live HTTP run recorded in the Phase 1 session handoff | Maintain |
-| Synthetic LedgerLite fixture (main + 6 branches) | IMPLEMENTED | `test_scanner.py` | Maintain |
+| Synthetic LedgerLite fixture (main + 6 branches) | IMPLEMENTED | `test_scanner.py`; interrupted-seed repair in `test_phase1_regressions.py` | Maintain |
 | Deny-by-default path allowlist | IMPLEMENTED | `test_foundation.py`, `test_phase1_regressions.py` | Maintain |
 | Python AST and rule findings | PARTIAL | Three heuristics tuned to the demo; Python only; absolute imports only | Phase 5 hardening |
 | Diff display | PARTIAL | First 140 lines per file; first 300 files; truncation is not flagged in the report | Phase 2 or 5 |

@@ -2,8 +2,8 @@
 
 - Human owner: **TBD** — `docs/TEAM_ROSTER.md` is unfilled; no ticket or owner was assigned for this session
 - Claude session operator: Nour Waled (local Git identity)
-- Branch: `feat/p1-foundation` (local only; nothing pushed)
-- Commit SHA (if committed): **not committed.** All Phase 1 changes are uncommitted in the working tree on top of `10f3cee` ("Import ShipSafe v0.2 team starter", on `main`)
+- Branch: `feat/p1-foundation` (pushed to GitHub on request; see commit line)
+- Commit SHA (if committed): `9726a61` (Phase 1 work) plus the defect 10 follow-up commit, on top of `10f3cee` ("Import ShipSafe v0.2 team starter", on `main`). Pushed to `origin/feat/p1-foundation` at `https://github.com/AbdelrahmanWael77/ship-safe`; `main` not pushed
 - Reviewer: **TBD** — no human review has happened
 - Date: 2026-11-11
 - Environment: Windows 11 Pro, Python 3.12.4, Git 2.43.0.windows.1, Node 24.22.2, npm 11.19.1; fastapi 0.162.4, pydantic 2.14.3, pytest 9.2.0
@@ -18,7 +18,7 @@
 ## Scope completed
 
 - [x] Audit of routes, contracts, scanner, demo generator, persistence, handoff schema, settings, tests, and Phase 2 dependency points → `docs/ARCHITECTURE.md`
-- [x] Baseline verified by execution; nine defects reproduced and fixed (one frontend build break, eight backend)
+- [x] Baseline verified by execution; ten defects reproduced and fixed (one frontend build break, nine backend)
 - [x] Provider interfaces and scan orchestration seam; local Git behaviour preserved
 - [x] `.env.example`, configuration reference, allowlist hardening, loopback bind confirmed
 - [x] Migration runner (no schema change) and a written design for Bitbucket metadata
@@ -26,7 +26,7 @@
 
 ## Defects reproduced on the v0.2 baseline and fixed
 
-Defects 2–9 each have a test in `backend/tests/test_phase1_regressions.py` that failed on `10f3cee` and passes now. Defect 1 is covered by `npm run build` itself; there is no frontend test suite.
+Defects 2–9 each have a test in `backend/tests/test_phase1_regressions.py` that failed on `10f3cee` and passes now. Defect 1 is covered by `npm run build` itself; there is no frontend test suite. Defect 10 was found after the first push; its test fails on the baseline seeder at import (`DEMO_BRANCH_FILES` did not exist), and the underlying early return was observed live on the workstation, not only in the test.
 
 | # | Defect | Baseline behaviour | Fix |
 |---|---|---|---|
@@ -39,6 +39,7 @@ Defects 2–9 each have a test in `backend/tests/test_phase1_regressions.py` tha
 | 7 | Authorizing a workspace locked out the demo | With `SHIPSAFE_ALLOWED_ROOT` set elsewhere, the dashboard's default scan returned 403 | Demo directory is always an allowed root |
 | 8 | Deeply nested review JSON | `RecursionError` from `json.loads`, HTTP 500 | Mapped to 422 |
 | 9 | Unknown ref message | `fatal: Needed a single revision` | `Git reference not found in this repository: '<ref>'` |
+| 10 | Interrupted demo seed is never repaired | Seen on the workstation after the first push: a Ctrl+C during the first API start (Git exit 130 on `commit`) left `.git` with two of six branches; every later start returned early because `.git` existed, and the dashboard failed on the other four branches | `ensure_demo_repo` is idempotent and rebuilds missing or uncommitted branches from `main`; refuses non-demo directories; sets `commit.gpgsign=false` in the demo repo |
 
 Also changed without a failing test first, and flagged for the reviewer: an empty `SHIPSAFE_ALLOWED_ROOT` is now treated as unset (it previously resolved to the process working directory), a drive root is refused, the frontend renders list-shaped 422 details instead of `[object Object]`, and SQLite connections are now closed after each use.
 
@@ -47,6 +48,7 @@ Also changed without a failing test first, and flagged for the reviewer: an empt
 Modified:
 - `backend/app/main.py` — settings, migrations, and provider wiring; 403/400 mapping; `RecursionError` on import. Routes and response shapes unchanged
 - `backend/app/scanner.py` — `scan_changes()` orchestration over a `ChangeProvider`; `scan_repository()` kept as a wrapper; guarded AST parsing. Heuristics untouched
+- `backend/app/demo_seed.py` — idempotent seeding and repair (defect 10); branch content moved to module-level `DEMO_BRANCH_FILES`. Generated files and commits are unchanged
 - `frontend/src/App.tsx` — build fix; `describeError()` for API error details
 - `scripts/dev.py` — loads `SHIPSAFE_*` lines from a root `.env`
 - `.gitignore` — ignores `.env`, `.env.*`, keeps `.env.example`
@@ -56,11 +58,11 @@ Modified:
 Added:
 - `backend/app/errors.py`, `backend/app/config.py`, `backend/app/db.py`
 - `backend/app/providers/__init__.py`, `base.py`, `local_git.py`
-- `backend/tests/test_phase1_regressions.py` (27 tests), `backend/tests/test_foundation.py` (15 tests)
+- `backend/tests/test_phase1_regressions.py` (32 tests), `backend/tests/test_foundation.py` (15 tests)
 - `.env.example`, `docs/CONFIGURATION.md`, `docs/MIGRATIONS.md`, this file
 - `frontend/package-lock.json` — generated by `npm install`; the baseline shipped none
 
-Not touched: `backend/app/ai_handoff.py`, `backend/app/demo_seed.py`, the two original test files, `frontend/src/types.ts`, `docs/PHASE_HANDOFF.md`, `docs/ACCEPTANCE_MATRIX.md`, `docs/DECISIONS.md`, `docs/TEAM_ROSTER.md`.
+Not touched: `backend/app/ai_handoff.py`, the two original test files, `frontend/src/types.ts`, `docs/PHASE_HANDOFF.md`, `docs/ACCEPTANCE_MATRIX.md`, `docs/DECISIONS.md`, `docs/TEAM_ROSTER.md`.
 
 ## API / DB contracts
 
@@ -111,6 +113,9 @@ After the changes:
 ```text
 $ cd backend && python -m pytest -q
 66 passed, 1 warning in 89.43s (0:01:29)
+
+$ cd backend && python -m pytest -q        # after the defect 10 follow-up
+71 passed, 1 warning in 122.94s (0:02:02)
 
 $ cd frontend && npm run build
 ✓ 1581 modules transformed.
@@ -191,7 +196,7 @@ Proposed results for the integrator. The canonical `docs/ACCEPTANCE_MATRIX.md` w
 | P1: Claude handoff export and import contract | PASS | `test_ai_handoff.py` unchanged and passing; live round trip |
 | P1: handoff reviewed by a real Claude Code session | NOT TESTED | Only hand-written and template JSON were imported |
 | P1: invalid paths, refs, inputs give predictable errors | PASS | `test_phase1_regressions.py`; live run |
-| P1: backend suite | PASS | 66 passed |
+| P1: backend suite | PASS | 71 passed (66 at `9726a61`, plus 5 demo-seed tests in the follow-up) |
 | P1: frontend production build | PASS | After the fix; output above |
 | P1: dashboard behaviour in a browser (scripted) | PASS | Headless Chrome run above: 14 + 4 checks |
 | P1: dashboard checked by a person (layout, all six branches) | NOT TESTED | No human click-through; no frontend tests in the repository |
@@ -208,7 +213,7 @@ Proposed results for the integrator. The canonical `docs/ACCEPTANCE_MATRIX.md` w
 - Secrets exposed in logs or files? No. None exist in the project; `.env.example` has no values.
 - Untrusted input handled: repository paths, refs, file names, file contents, repository Git config (textconv), review JSON size, depth, and schema.
 - Test execution isolation: not applicable. No repository code or tests are executed by ShipSafe. The only suites run on the host were ShipSafe's own backend tests.
-- No pushes, merges, tags, remotes, or Bitbucket calls were made.
+- No merges, tags, or Bitbucket calls were made. On the user's request, `origin` was added and `feat/p1-foundation` alone was pushed, with their own GitHub credentials; no credential was read or stored by this session.
 
 ## Blockers and known defects
 
@@ -218,7 +223,6 @@ Not fixed, because they were not reproduced or are out of Phase 1 scope. Details
 - A UNC `repository_path` on Windows is resolved before the allowlist check. Not tested.
 - File names beginning with `:` may be treated as Git pathspec magic. Cannot be created on Windows; not tested.
 - Other Git configuration inside a scanned repository is still honoured by Git.
-- `ensure_demo_repo` does not repair a half-created repository and inherits global Git config such as `commit.gpgsign`.
 - Reports keep 12-character SHAs; the 300-file cap is not surfaced; patches are cut at 140 lines.
 - `npm audit`: 2 advisories (1 moderate, 1 high) in the Vite/esbuild toolchain, not assessed. `npm audit fix --force` proposes breaking upgrades and was not run.
 - The local provider compares the two commits directly, not from their merge base. Correct for the demo branches; Phase 2 must choose pull-request comparison semantics (`docs/ARCHITECTURE.md`, "Phase 2 dependency points").
@@ -239,6 +243,7 @@ Not fixed, because they were not reproduced or are out of Phase 1 scope. Details
 4. The report JSON shape is frozen for Phase 1; full SHAs and provider metadata arrive as new columns in Phase 2, not by rewriting stored reports.
 5. Renames are reported as a delete plus an add (existing behaviour, now part of the `FileDelta` contract).
 6. The initial repository import was committed directly to `main` as the starting point.
+7. The demo seeder may rewrite branches inside the demo directory only when they are missing or carry no commit, and never touches a repository it did not generate.
 
 ## Reviewer instructions
 
@@ -258,7 +263,7 @@ Check independently; do not rely on the results above.
 - No test runner, no AI invocation, no webhooks, no authentication.
 - No new API endpoints; repository discovery is not exposed over HTTP.
 - No human or visual check of the dashboard, and no frontend tests in the repository; the headless-Chrome script was a one-off and is not committed.
-- Not reviewed, not merged, not pushed, not tagged `shipsafe-phase-1`.
+- Not reviewed, not merged, not tagged `shipsafe-phase-1`. Pushed as a feature branch only; `main` is not on the remote.
 - Canonical `PHASE_HANDOFF.md`, `ACCEPTANCE_MATRIX.md`, `DECISIONS.md`, and `TEAM_ROSTER.md` not updated.
 
 ## Suggested next ticket

@@ -176,6 +176,83 @@ def test_missing_ref_error_names_the_ref(api):
     assert "feature/not-real" in response.json()["detail"]
 
 
+def _refs(repo):
+    out = run_git(repo, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads")
+    return dict(line.split() for line in out.splitlines())
+
+
+def test_interrupted_demo_seed_is_repaired_on_next_start(tmp_path):
+    """Seen on a workstation: Ctrl+C during the first API start left ``.git``
+    plus two branches, and every later start accepted the broken repository."""
+    from app.demo_seed import BAD_AUTH, DEMO_BRANCH_FILES, ensure_demo_repo
+
+    repo = ensure_demo_repo(tmp_path / "demo")
+    before = _refs(repo)
+    # Reproduce the interrupted state: four branches never created, one branch
+    # created with its change staged but not committed.
+    for branch in list(DEMO_BRANCH_FILES)[2:]:
+        run_git(repo, "branch", "-D", branch)
+    run_git(repo, "checkout", "-q", "-B", "feature/auth-regression", "main")
+    (repo / "app" / "auth.py").write_text(BAD_AUTH, encoding="utf-8")
+    run_git(repo, "add", ".")
+    assert set(_refs(repo)) == {"main", "feature/release-candidate", "feature/auth-regression"}
+
+    ensure_demo_repo(repo)
+
+    after = _refs(repo)
+    assert set(after) == set(before)
+    assert after["main"] == before["main"]
+    assert after["feature/release-candidate"] == before["feature/release-candidate"]
+    assert all(after[b] != after["main"] for b in DEMO_BRANCH_FILES), "every demo branch carries its commit"
+    assert run_git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main"
+    assert run_git(repo, "status", "--porcelain") == ""
+    report = scan_repository(repo, "main", "feature/auth-regression")
+    assert [f["path"] for f in report["files"]] == ["app/auth.py"]
+
+
+def test_demo_seed_interrupted_before_the_first_commit_is_completed(tmp_path):
+    from app.demo_seed import DEMO_BRANCH_FILES, ensure_demo_repo
+
+    repo = tmp_path / "demo"
+    repo.mkdir()
+    run_git(repo, "init", "-b", "main")
+    ensure_demo_repo(repo)
+    assert set(_refs(repo)) == {"main", *DEMO_BRANCH_FILES}
+
+
+def test_complete_demo_repository_is_not_modified_by_a_restart(tmp_path):
+    from app.demo_seed import ensure_demo_repo
+
+    repo = ensure_demo_repo(tmp_path / "demo")
+    before = _refs(repo)
+    ensure_demo_repo(repo)
+    assert _refs(repo) == before
+
+
+def test_demo_seed_refuses_to_write_into_a_repository_it_did_not_generate(tmp_path):
+    from app.demo_seed import ensure_demo_repo
+    from app.errors import ConfigError
+
+    repo = make_repo(tmp_path / "theirs", {"notes.md": "mine\n"}, {"notes.md": "edited\n"})
+    before = _refs(repo)
+    with pytest.raises(ConfigError):
+        ensure_demo_repo(repo)
+    assert _refs(repo) == before
+    assert run_git(repo, "status", "--porcelain") == ""
+
+
+def test_demo_seed_refuses_a_non_empty_directory_that_is_not_a_repository(tmp_path):
+    from app.demo_seed import ensure_demo_repo
+    from app.errors import ConfigError
+
+    folder = tmp_path / "stuff"
+    folder.mkdir()
+    (folder / "keep.txt").write_text("do not commit me\n", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        ensure_demo_repo(folder)
+    assert not (folder / ".git").exists()
+
+
 # --------------------------------------------------------------------------
 # Baseline verification: behaviour Phase 1 must preserve
 # --------------------------------------------------------------------------

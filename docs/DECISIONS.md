@@ -17,3 +17,55 @@ Related ticket / commit:
 - Who approves sharing proprietary diffs with Claude Code: TBD.
 - Who can authorize isolated test execution: TBD.
 - Who reviews database migrations: TBD.
+
+## 2026-11-12 — Phase 1 is completed by a single owner
+Decision owner: Nour Waled
+Problem / tradeoff: No other team members are assigned; waiting would stall Phase 1.
+Decision: The project owner manages and integrates Phase 1 alone, with Claude Code as implementation partner. Claude's test results are evidence; the owner approves every commit and the merge.
+Alternatives considered: Wait for a roster; assign tickets to unavailable people.
+Security / product impact: Independent backend/frontend/QA reviews did not happen; recorded as NOT TESTED in the acceptance matrix rather than claimed.
+Related ticket / commit: `feat/p1-foundation`
+
+## 2026-11-12 — The API answers only to loopback Host names
+Decision owner: Nour Waled
+Problem / tradeoff: The unauthenticated loopback API was reachable from any web page via DNS rebinding; CORS cannot stop a same-origin request.
+Decision: `TrustedHostMiddleware` with `127.0.0.1`, `localhost`, `[::1]` (any port), added outermost. Tests create `TestClient(app, base_url="http://127.0.0.1")`.
+Alternatives considered: Origin checks only (misses non-browser and no-Origin requests); authentication (Phase 5 scope).
+Security / product impact: Closes the rebinding vector; local processes with a loopback Host still have full access (documented).
+Related ticket / commit: remediation A1
+
+## 2026-11-12 — Git paths are always literal; repository metadata must be inside the allowlist
+Decision owner: Nour Waled
+Problem / tradeoff: Tree entries such as `*` or `:!a.py` were interpreted as globs/pathspec magic, mis-attributing diffs; a one-line `.git` file could redirect a scan to any repository on the machine.
+Decision: Every scanner Git command runs with `--literal-pathspecs` and per-file diffs use `-- ./<path>`; `get_repository()` also requires `git rev-parse --git-common-dir` to be under an allowed root (worktrees and submodules inside the allowlist keep working).
+Alternatives considered: `:(literal)` magic (does not cover `::name`); refusing `.git` files outright (breaks worktrees).
+Security / product impact: Report integrity on repositories cloned from Linux/macOS; allowlist cannot be bypassed from inside an allowed directory.
+Related ticket / commit: remediation B1, B2
+
+## 2026-11-12 — Demo seeder never destroys work and identifies its own repository
+Decision owner: Nour Waled
+Problem / tradeoff: Repairing a half-built demo repository used `checkout -f` and `git add .`, discarding uncommitted edits and committing stray files; any repository whose root commit had the demo subject was adopted.
+Decision: Repair refuses (startup error naming the files) when a tracked file has a change the seeder did not write; only the demo's own files are added; the generated repository carries `shipsafe.demo=true`, and pre-marker repositories are recognised by root subject plus synthetic author e-mail. `SHIPSAFE_DEMO_DIR` gets the same drive-root check as `SHIPSAFE_ALLOWED_ROOT`.
+Alternatives considered: Always refuse repair (reintroduces defect 10); stash user changes (silently moves work).
+Security / product impact: A mis-set demo directory cannot be modified or made a drive-wide allowlist.
+Related ticket / commit: remediation B4, B5
+
+## 2026-11-12 — Report contract: additive completeness fields
+Decision owner: Nour Waled
+Problem / tradeoff: The 300-file and 140-line caps were silent; a cut report looked complete to humans and to Claude.
+Decision: Add `summary.truncated`, `summary.files_omitted`, `files[].diff_truncated`, `files[].diff_lines_omitted`, a marker line at the end of a cut diff, a UI badge/notice, and dynamic ZIP `limitations`. Keys are optional for readers; stored reports are not rewritten; `docs/example-scan-report.json` and the pinning test were updated. No database migration.
+Alternatives considered: Text-only markers (not machine-readable); defer to Phase 2.
+Security / product impact: Reviewers can no longer mistake a truncated report for a complete one.
+Related ticket / commit: remediation B3
+
+## 2026-11-12 — Decisions carried forward from the Phase 1 session handoff
+Decision owner: Nour Waled (confirm or object before merge)
+1. The demo repository is always scannable, in addition to `SHIPSAFE_ALLOWED_ROOT`.
+2. A drive or filesystem root is rejected as an allowed root (now also as the demo directory).
+3. Schema versioning uses `PRAGMA user_version` with additive, forward-only migrations.
+4. Full SHAs and provider metadata arrive as new columns in Phase 2, not by rewriting stored reports.
+5. Renames are reported as a delete plus an add.
+6. The initial repository import was committed directly to `main` as the starting point.
+7. The demo seeder may rewrite branches inside the demo directory only when they are missing or carry no commit, and never touches a repository it did not generate.
+8. `frontend/package-lock.json` is committed for reproducible builds.
+9. Vite 5.4.21 is accepted for Phase 1 (see `docs/ARCHITECTURE.md`, known brittle areas); the toolchain upgrade is Phase 2 work.

@@ -4,11 +4,14 @@ Allowed status values: `PASS`, `FAIL`, `BLOCKED`, `NOT TESTED`. Only the integra
 
 | Phase | Gate | Status | Evidence / commands / commit | Reviewer |
 |---|---|---|---|---|
-| Baseline | Original backend tests | PASS | `cd backend && python -m pytest -q` → 24 passed (2026-11-11, packaging environment) | Initial package check; team reverify |
-| Baseline | Frontend production build | NOT TESTED | Run `cd frontend && npm install && npm run build` locally | TBD |
-| 1 | Local Git scanning + imports preserved | NOT TESTED | | |
-| 1 | Architecture, provider interfaces, config, migration readiness | NOT TESTED | | |
-| 1 | Frontend build and backend suites | NOT TESTED | | |
+| Baseline | Original backend tests | PASS | `cd backend && python -m pytest -q` at `10f3cee` → 24 passed (2026-11-11 packaging env; re-run 2026-11-12 in a detached worktree: 24 passed in 51 s, Windows 11 / Python 3.12.4) | Nour Waled |
+| Baseline | Frontend production build | FAIL | `npm run build` at `10f3cee` → `tsc` TS2550 ×2 at `src/App.tsx:300` (`replaceAll` vs `lib: ES2020`); reproduced 2026-11-12. Fixed in Phase 1 (`9726a61`) | Nour Waled |
+| 1 | Local Git scanning + imports preserved | PASS | Backend suite 101 passed (2026-11-12, commit `d9e7f19` on `feat/p1-foundation`, Windows 11 / Python 3.12.4); all six demo branches scanned from the dashboard with expected finding counts, export JSON and handoff ZIP verified per scan (33/33 scripted checks); review import round trip in `test_ai_handoff.py` | Nour Waled |
+| 1 | Architecture, provider interfaces, config, migration readiness | PASS | `test_foundation.py` 15 passed (protocols, in-memory provider, pinned report shape, settings, migrations adopt/rollback/fail-closed); `docs/ARCHITECTURE.md`, `CONFIGURATION.md`, `MIGRATIONS.md` reconciled with code 2026-11-12 | Nour Waled (no independent Bitbucket-interface or migration reviewer) |
+| 1 | Frontend build and backend suites | PASS | `cd frontend && npm run build` → ✓ built (198.79 kB JS); `cd backend && python -m pytest -q` → 101 passed in 236 s (2026-11-12) | Nour Waled |
+| 1 | Security remediation (Host header, literal pathspecs, `.git` redirect, seeder, demo-dir root, truncation reporting) | PASS | `tests/test_phase1_remediation.py` 30 passed; 16 of them fail on pre-fix `f8967bc` (worktree run 2026-11-12); live Host check through the Vite proxy 200 / spoofed Host 400 | Nour Waled |
+| 1 | Python 3.11 and Linux | PASS | Docker `python:3.11-slim` (Python 3.11.18, Git 2.47.3, Linux x86_64): `python -m pytest -q` → 101 passed in 19 s; `node:24-slim`: `npm ci && npm run build` → ✓ built, identical bundle hash (2026-11-12). macOS NOT TESTED | Nour Waled |
+| 1 | Human visual review of the dashboard; real Claude Code export→review→import | NOT TESTED | Only scripted headless-Chrome runs and hand-written review JSON so far | TBD |
 | 2 | Bitbucket repository + PR list (mock) | NOT TESTED | | |
 | 2 | Read-only live Bitbucket (approved credentials) | NOT TESTED | | |
 | 2 | Immutable commit-bound PR scan + stale detection | NOT TESTED | | |
@@ -20,3 +23,5 @@ Allowed status values: `PASS`, `FAIL`, `BLOCKED`, `NOT TESTED`. Only the integra
 | 5 | Security review + regression suite + demo evidence | NOT TESTED | | |
 
 Never change a gate to PASS based on a model's claim without actual executed evidence. A `BLOCKED` gate must contain the blocker and safe fallback decision.
+
+Phase 1 rows were filled on 2026-11-12 by the single owner from commands executed on the tree committed as `d9e7f19` on `feat/p1-foundation` (docs committed separately on top). Re-stamp after merge.

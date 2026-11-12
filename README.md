@@ -189,7 +189,7 @@ This is a **working foundation**, not a production-ready security platform:
 - AI integration is **manual handoff**, not an automated Claude API connection or a built-in AI agent. There is no automatic model invocation, patch application, GitHub/GitLab OAuth, or CI gating.
 - AST analysis is Python-only and intentionally shallow. It may miss or overreport risks.
 - Import mapping observes direct imports, not dynamic/runtime dependency flow.
-- Diff previews are limited to 140 lines per changed file; large repositories need pagination.
+- Diff previews are limited to 140 lines per changed file and 300 changed files per scan; the report, the dashboard, and the handoff ZIP flag when either limit was hit (`summary.truncated`, `files_omitted`, per-file `diff_truncated`). Large repositories need pagination.
 - Local SQLite is single-machine storage. There is no multi-user authentication or role-based access. An imported JSON author cannot be independently attested.
 - Do **not** expose the FastAPI service publicly without authentication, rate limits, and stronger repository isolation.
 

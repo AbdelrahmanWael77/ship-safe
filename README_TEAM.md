@@ -27,7 +27,7 @@ Run `claude` from the project root after authenticating using your own approved 
 Claude Code should load root `CLAUDE.md` automatically at session start. The explicit instruction above also draws attention to the phase prompt.
 
 ## Existing project code
-Contains the original v0.2 backend/frontend plus the new planning/team instructions. This package does **not** pre-implement v1.0 Bitbucket or test-runner features.
+The kit as distributed held only the planning/team files; the original v0.2 backend/frontend was imported separately from the `shipsafe_v0_2_claude_code_source` package and committed unmodified as `10f3cee` ("Import ShipSafe v0.2 team starter"), which is the baseline every phase builds on. This package does **not** pre-implement v1.0 Bitbucket or test-runner features.
 
 ## Safety
 The Claude Code Team login does not grant ShipSafe access to Bitbucket. Bitbucket API credentials are separate. Never paste tokens into a Claude prompt, and get organization approval before exporting proprietary source for a model review.

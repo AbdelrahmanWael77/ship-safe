@@ -4,8 +4,8 @@
 - Claude session operator: Nour Waled (local Git identity)
 - Branch: `feat/p1-foundation` (pushed to GitHub on request; see commit line)
 - Commit SHA (if committed): `9726a61` (Phase 1 work) plus the defect 10 follow-up commit, on top of `10f3cee` ("Import ShipSafe v0.2 team starter", on `main`). Pushed to `origin/feat/p1-foundation` at `https://github.com/AbdelrahmanWael77/ship-safe`; `main` not pushed
-- Reviewer: **TBD** — no human review has happened
-- Date: 2026-11-11
+- Reviewer: **TBD** — no second-person review. On 2026-11-12 the owner ran an independent investigation of this handoff with Claude Code and remediated its findings; see "Remediation after independent review" below
+- Date: 2026-11-11 (original session); 2026-11-12 (remediation, commit `d9e7f19` on top of `f8967bc`; documentation in the following commit)
 - Environment: Windows 11 Pro, Python 3.12.4, Git 2.43.0.windows.1, Node 24.22.2, npm 11.19.1; fastapi 0.162.4, pydantic 2.14.3, pytest 9.2.0
 
 ## Manual interventions and deviations from the plan
@@ -23,6 +23,48 @@
 - [x] `.env.example`, configuration reference, allowlist hardening, loopback bind confirmed
 - [x] Migration runner (no schema change) and a written design for Bitbucket metadata
 - [ ] Human review, merge, canonical doc updates, tag — not done, not mine to do
+
+## Remediation after independent review (2026-11-12)
+
+The owner decided to complete Phase 1 as a single integrator. An investigation of this handoff (actual implementation, not documentation; all reproductions in isolated temp directories) produced six fixes. Each has regression tests in `backend/tests/test_phase1_remediation.py` (30 tests); the 16 that assert fixed behaviour were run against the pre-fix commit `f8967bc` in a detached worktree and fail there.
+
+| # | Finding (severity) | Behaviour on `f8967bc` | Fix |
+|---|---|---|---|
+| A1 | No Host-header check: DNS rebinding reaches the loopback API (High) | `Host: attacker.example` → 200 on every route; `POST /api/scans` → 201. CORS cannot help: the rebinding request is same-origin | `TrustedHostMiddleware` outermost, hosts `127.0.0.1`, `localhost`, `[::1]` (any port) → 400 otherwise. Tests use `TestClient(app, base_url="http://127.0.0.1")`. Live: direct 200, spoofed 400, Vite proxy 200 |
+| B5 | `SHIPSAFE_DEMO_DIR` had no drive-root check (Low) | `C:\` accepted; `allowed_roots == (C:\,)` (seeder then refused to start, so fail-closed by accident) | Same `_scannable_root()` check as `SHIPSAFE_ALLOWED_ROOT` |
+| B1 | File names read as pathspec magic / globs (High, report integrity) | Tree entries `*` → patch of every file; `:!a.py` → every file but `a.py`; `[a].py` → also `a.py`'s lines. Linux-cloned repositories can carry these names | `git --literal-pathspecs` on every scanner command plus `-- ./<path>` (the prefix is what fixes `::name`). Tested on 12 hostile names built with `git mktree -z` |
+| B2 | Redirecting `.git` file bypasses the allowlist (Medium) | `redirect/.git` = `gitdir: <outside>/.git` under an allowed root scanned the outside repository and returned its diff | `get_repository()` also requires `git rev-parse --path-format=absolute --git-common-dir` to be under an allowed root. Worktrees/submodules inside the allowlist still work (tested) |
+| B4 | Seeder repair discarded uncommitted edits and committed stray files; look-alike repos adopted (Low) | Repair with one branch missing: `checkout -f` wiped an edit to `app/auth.py`, `git add .` committed `stray.txt` into the rebuilt branch and the final checkout deleted it; a foreign repo whose root commit subject matched was accepted | Repair refuses (`ConfigError` naming files) when a tracked file has a change the seeder did not itself write (the real interrupted-seed case still repairs); `git add -- <demo files>` only; `shipsafe.demo=true` marker at creation, legacy repos recognised by root subject + synthetic author e-mail |
+| B3 | Truncation invisible in report, UI and ZIP (Medium) | 302 changed files → `files_changed: 300`, `lines_added: 499`, no flag anywhere; 200-line patch stored as 140 lines ending mid-hunk | Additive fields `summary.truncated`, `summary.files_omitted`, `files[].diff_truncated`, `files[].diff_lines_omitted`; marker line at the end of a cut diff; UI badge and notice; dynamic ZIP `limitations`. `ChangeSet.omitted` added to the provider contract. Example JSON and pinning test updated; old stored reports read as not truncated |
+
+Also verified and accepted without change: no repository-defined Git command runs during a scan (18 config keys, 7 hooks, attribute filters armed; all fire on `git add`, none during the scan; now guarded by a test); `..`, UNC admin shares, `\\?\`, 8.3 names, junctions all denied or resolved correctly; migrations idempotent, v0.2 schema byte-identical, rollback and fail-closed confirmed; routes and status codes unchanged apart from the Host check; the two `npm audit` advisories are dev-server-only and unreachable in this setup (no non-breaking fix exists; toolchain upgrade is Phase 2).
+
+Files changed by the remediation: `backend/app/main.py`, `config.py`, `demo_seed.py`, `scanner.py`, `ai_handoff.py`, `providers/base.py`, `providers/local_git.py`; `backend/tests/test_phase1_remediation.py` (new) and the `TestClient` base URL in the four existing test files; `frontend/src/App.tsx`, `types.ts`; `docs/example-scan-report.json`; docs: `ARCHITECTURE.md`, `CONFIGURATION.md`, `IMPLEMENTATION_STATUS.md`, `DECISIONS.md`, `ACCEPTANCE_MATRIX.md`, `CLAUDE-CODE-HANDOFF.md`, `TEAM_START_HERE.md`, `README.md`, `README_TEAM.md`, `.env.example`, this file.
+
+Commands executed on 2026-11-12 (Windows 11, Python 3.12.4, Node 24.22.2, `.venv`):
+```text
+$ cd backend && python -m pytest -q
+101 passed, 1 warning in 235.95s
+
+$ (detached worktree at f8967bc, new test file copied in)
+16 failed, 14 passed in 79.29s          # the 16 are the fixed-behaviour assertions
+
+$ cd frontend && npm run build
+✓ 1581 modules transformed · dist/assets/index-BP1kdbMN.js 198.79 kB · ✓ built in 7.39s
+
+Live (uvicorn 127.0.0.1:8000, vite 127.0.0.1:5173):
+direct 127.0.0.1:8000 /api/health -> 200 · spoofed Host attacker.example -> 400
+through Vite proxy 127.0.0.1:5173 and localhost:5173 -> 200 · Vite with spoofed Host -> 403
+
+Headless Chrome, scratch demo + database, all six branches via the Run analysis button:
+release-candidate 3 · auth-regression 1 · pricing-regression 1 · api-breaking 1 · docs-only 0 · safe-cleanup 0  (all as expected)
+per scan: Code changes renders, no truncation badge, export JSON 200 (truncated=false), handoff ZIP 200 with 3 entries and digest == /ai/context
+SUMMARY 33 passed, 0 failed · no uncaught page errors
+```
+
+Linux / Python 3.11 (Docker `python:3.11-slim`, Git 2.47.3): `101 passed in 19.10s`; Linux `node:24-slim` `npm ci && npm run build`: ✓ built, same bundle hash as Windows.
+
+Still not done after remediation: a macOS run; a human visual pass over the dashboard; a real Claude Code export → review → import round trip; second-person review of the Bitbucket interfaces and of the migration runner.
 
 ## Defects reproduced on the v0.2 baseline and fixed
 
@@ -62,13 +104,13 @@ Added:
 - `.env.example`, `docs/CONFIGURATION.md`, `docs/MIGRATIONS.md`, this file
 - `frontend/package-lock.json` — generated by `npm install`; the baseline shipped none
 
-Not touched: `backend/app/ai_handoff.py`, the two original test files, `frontend/src/types.ts`, `docs/PHASE_HANDOFF.md`, `docs/ACCEPTANCE_MATRIX.md`, `docs/DECISIONS.md`, `docs/TEAM_ROSTER.md`.
+Not touched in the original session: `backend/app/ai_handoff.py`, the two original test files, `frontend/src/types.ts`, `docs/PHASE_HANDOFF.md`, `docs/ACCEPTANCE_MATRIX.md`, `docs/DECISIONS.md`, `docs/TEAM_ROSTER.md`. The 2026-11-12 remediation later changed `ai_handoff.py` (dynamic limitations), the two original test files (`TestClient` base URL only), `types.ts` (optional fields), and filled `ACCEPTANCE_MATRIX.md` and `DECISIONS.md` with the owner acting as integrator. Still untouched: `docs/PHASE_HANDOFF.md` (rewritten after merge) and `docs/TEAM_ROSTER.md`.
 
 ## API / DB contracts
 
 - **HTTP API:** no route, request field, response field, or success status changed. `frontend/src/types.ts` is unchanged. Two status changes, both 500 → 4xx (defects 6 and 8). One behaviour change: defect 7.
 - **Error text:** the unknown-ref 400 message changed (defect 9).
-- **Report and review schema:** unchanged. Key order is pinned to `docs/example-scan-report.json` by a test.
+- **Report and review schema:** unchanged in the original session. The remediation added four additive report fields (`summary.truncated`, `summary.files_omitted`, `files[].diff_truncated`, `files[].diff_lines_omitted`) and the ZIP `limitations` text is now computed from them; `docs/example-scan-report.json` and the pinning test were updated. The review import schema is unchanged. The API now also refuses non-loopback `Host` headers with 400.
 - **Database:** schema unchanged. `PRAGMA user_version` goes from 0 to 1 on first start; no rows are read or written by that step.
 - **New internal types** (`backend/app/providers/base.py`, not exposed over HTTP):
 
@@ -196,15 +238,17 @@ Proposed results for the integrator. The canonical `docs/ACCEPTANCE_MATRIX.md` w
 | P1: Claude handoff export and import contract | PASS | `test_ai_handoff.py` unchanged and passing; live round trip |
 | P1: handoff reviewed by a real Claude Code session | NOT TESTED | Only hand-written and template JSON were imported |
 | P1: invalid paths, refs, inputs give predictable errors | PASS | `test_phase1_regressions.py`; live run |
-| P1: backend suite | PASS | 71 passed (66 at `9726a61`, plus 5 demo-seed tests in the follow-up) |
+| P1: backend suite | PASS | 101 passed after the remediation (71 at `f8967bc` + 30 in `test_phase1_remediation.py`) |
+| P1: independent-review fixes A1, B1–B5 | PASS | 30 remediation tests pass; the 16 fixed-behaviour assertions fail on `f8967bc` |
+| P1: all six demo branches through the dashboard, export and ZIP per scan | PASS | Scripted headless Chrome, 33 checks, 2026-11-12 |
 | P1: frontend production build | PASS | After the fix; output above |
 | P1: dashboard behaviour in a browser (scripted) | PASS | Headless Chrome run above: 14 + 4 checks |
-| P1: dashboard checked by a person (layout, all six branches) | NOT TESTED | No human click-through; no frontend tests in the repository |
+| P1: dashboard checked by a person (layout) | NOT TESTED | No human click-through; no frontend tests in the repository |
 | P1: provider interfaces small, usable, behaviour-preserving | PASS | `test_foundation.py`; report shape pinned to the v0.2 example |
-| P1: config, allowlist, loopback bind | PASS | `test_foundation.py`; netstat above |
+| P1: config, allowlist, loopback bind, Host-header check | PASS | `test_foundation.py`, `test_phase1_remediation.py`; netstat above; live spoofed-Host check 400 |
 | P1: migration readiness | PASS | v0.2 database adopted with rows intact; rollback and fail-closed tests |
 | P1: no credentials, fake statuses, repository writes, history deletion | PASS | Secret grep clean; `test_scan_does_not_modify_the_scanned_repository`; no DELETE/UPDATE in code |
-| P1: on Python 3.11, macOS, or Linux | NOT TESTED | Only Windows / Python 3.12.4 was run |
+| P1: on Python 3.11 and Linux | PASS | Docker `python:3.11-slim` (3.11.18, Git 2.47.3): 101 passed in 19 s; `node:24-slim` build ✓ (2026-11-12). macOS NOT TESTED |
 | P1: docs reflect merged code; PRs reviewed and approved | **BLOCKED** | Nothing is merged or reviewed; needs human owners |
 
 ## Security / privacy review
@@ -219,12 +263,13 @@ Proposed results for the integrator. The canonical `docs/ACCEPTANCE_MATRIX.md` w
 
 Not fixed, because they were not reproduced or are out of Phase 1 scope. Details in `docs/ARCHITECTURE.md`.
 
-- No authentication and no Host-header check on the API (DNS rebinding is unmitigated).
-- A UNC `repository_path` on Windows is resolved before the allowlist check. Not tested.
-- File names beginning with `:` may be treated as Git pathspec magic. Cannot be created on Windows; not tested.
-- Other Git configuration inside a scanned repository is still honoured by Git.
-- Reports keep 12-character SHAs; the 300-file cap is not surfaced; patches are cut at 140 lines.
-- `npm audit`: 2 advisories (1 moderate, 1 high) in the Vite/esbuild toolchain, not assessed. `npm audit fix --force` proposes breaking upgrades and was not run.
+- No authentication on the API. The `Host` header is limited to loopback names since 2026-11-12, which closes DNS rebinding; any local process with a loopback `Host` still has full access.
+- UNC, `\\?\`, 8.3 and junction paths: tested 2026-11-12, all denied or resolved to the real path. A UNC `repository_path` is still resolved (a network touch) before it is denied.
+- File names read as pathspec magic or globs: fixed 2026-11-12 (`--literal-pathspecs`, `-- ./path`).
+- Repository-defined Git commands: tested 2026-11-12 with 18 config keys, hooks and attribute filters armed; none runs during a scan. Guarded by a test.
+- Reports keep 12-character SHAs (resolve uniquely; full SHAs arrive with Phase 2). The 300-file cap and 140-line cut are now reported in the JSON, the UI and the ZIP.
+- `npm audit`: 2 advisories, assessed 2026-11-12 as dev-server-only and not reachable in this loopback setup; `launch-editor` lines do not apply (not installed); no non-breaking fix exists. Toolchain upgrade is Phase 2 work.
+- Scans have per-command timeouts but no overall budget and no cap on a single Git command's output size (local resource use only).
 - The local provider compares the two commits directly, not from their merge base. Correct for the demo branches; Phase 2 must choose pull-request comparison semantics (`docs/ARCHITECTURE.md`, "Phase 2 dependency points").
 - The frontend has no favicon (one 404 per page load).
 - `README_TEAM.md` and `docs/TEAM_START_HERE.md` claim the kit ships the source. It did not. Those files were left as they are.
@@ -262,9 +307,10 @@ Check independently; do not rely on the results above.
 - No Bitbucket code, settings, or network calls. No pull-request discovery implementation.
 - No test runner, no AI invocation, no webhooks, no authentication.
 - No new API endpoints; repository discovery is not exposed over HTTP.
-- No human or visual check of the dashboard, and no frontend tests in the repository; the headless-Chrome script was a one-off and is not committed.
-- Not reviewed, not merged, not tagged `shipsafe-phase-1`. Pushed as a feature branch only; `main` is not on the remote.
-- Canonical `PHASE_HANDOFF.md`, `ACCEPTANCE_MATRIX.md`, `DECISIONS.md`, and `TEAM_ROSTER.md` not updated.
+- No human or visual check of the dashboard, and no frontend tests in the repository; the headless-Chrome scripts were one-offs and are not committed.
+- No macOS run. No real Claude Code export → review → import round trip.
+- No second-person review of anything. Not merged, not tagged `shipsafe-phase-1`. The remediation is committed as `d9e7f19` (code and tests) plus a documentation commit; not pushed at the time of writing; `main` is not on the remote.
+- Canonical `PHASE_HANDOFF.md` (rewritten after merge) and `TEAM_ROSTER.md` not updated. `ACCEPTANCE_MATRIX.md` and `DECISIONS.md` were filled by the owner on 2026-11-12.
 
 ## Suggested next ticket
 

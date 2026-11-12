@@ -15,7 +15,7 @@ ShipSafe needs no configuration and no secrets to run the synthetic demo. Every 
 |---|---|---|
 | `SHIPSAFE_ALLOWED_ROOT` | unset | One extra directory whose repositories may be scanned. The repository path must be this directory or lie beneath it. |
 | `SHIPSAFE_DB_PATH` | `backend/.shipsafe-data/scans.db` | SQLite file for scans and imported reviews. |
-| `SHIPSAFE_DEMO_DIR` | `backend/demo-repo` | Where the synthetic LedgerLite repository is generated. |
+| `SHIPSAFE_DEMO_DIR` | `backend/demo-repo` | Where the synthetic LedgerLite repository is generated. It is always an allowed scanning root, so it gets the same drive-root check as `SHIPSAFE_ALLOWED_ROOT`. |
 
 An unset variable and an empty one behave the same.
 
@@ -24,8 +24,9 @@ An unset variable and an empty one behave the same.
 - With nothing configured, only the synthetic demo repository can be scanned. Every other path returns 403.
 - The demo repository is always scannable, whatever `SHIPSAFE_ALLOWED_ROOT` is.
 - `SHIPSAFE_ALLOWED_ROOT` accepts a single directory. Paths are resolved (symlinks and `..`) before the check.
-- A drive root or filesystem root (`C:\`, `/`) is refused and the API will not start.
-- Only authorize a directory of repositories you are permitted to scan and whose contents you trust. Scanning runs `git` against the repository, and exported handoff ZIPs contain its diffs.
+- A drive root or filesystem root (`C:\`, `/`) is refused for both `SHIPSAFE_ALLOWED_ROOT` and `SHIPSAFE_DEMO_DIR`, and the API will not start.
+- A `.git` *file* that redirects to another repository (as Git worktrees and submodules use) is accepted only when the repository it points to is also under an allowed root. Otherwise the scan is refused with 403.
+- Only authorize a directory of repositories you are permitted to scan. Scanning runs read-only `git` commands against the repository with every path treated literally and with repository-defined diff drivers, text converters, hooks, filters and aliases verified not to run; exported handoff ZIPs contain its diffs.
 
 ```powershell
 # Windows PowerShell
@@ -45,6 +46,7 @@ Not configurable, on purpose.
 - `scripts/dev.py` starts uvicorn with `--host 127.0.0.1 --port 8000`.
 - `npm run dev` and `npm run preview` pass `--host 127.0.0.1`; the dev server uses port 5173 with `strictPort`.
 - CORS allows only `http://localhost:5173` and `http://127.0.0.1:5173`.
+- The API answers only to requests whose `Host` header is `127.0.0.1`, `localhost`, or `[::1]` (any port). Any other `Host` gets HTTP 400 before a route runs. This stops a web page from reaching the loopback API through DNS rebinding, which CORS alone does not prevent. The Vite proxy sets `changeOrigin`, so the dashboard is unaffected.
 
 The API has no authentication. Do not start it with `--host 0.0.0.0` or put it behind a public proxy.
 

@@ -3,6 +3,8 @@
 ## What you're receiving
 This is the existing **ShipSafe v0.2 source** with a **five-phase Claude Code execution kit**, not an already completed v1.0 implementation. The project has the real local Git scanner, manual Claude review handoff, frontend, backend, and tests. The new prompts describe work still to be done.
 
+> Note: the kit folder itself shipped without the application source. The v0.2 source was imported from the separate `shipsafe_v0_2_claude_code_source` package and committed unmodified as `10f3cee`; see `README_TEAM.md`.
+
 ## First 15 minutes (team lead)
 1. Extract this package into a team-owned Git repository. Confirm company policy permits the chosen hosting and access.
 2. Read `CLAUDE.md` and `docs/TEAM_WORKFLOW.md` together. Assign up to four people and record actual owners in `docs/TEAM_ROSTER.md`.

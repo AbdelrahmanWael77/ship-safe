@@ -1,6 +1,6 @@
 # Configuration
 
-ShipSafe needs no configuration and no secrets to run the synthetic demo. Every setting below is optional.
+ShipSafe needs no configuration and no secrets to run the synthetic demo. Every setting below is optional. The only secret is the Bitbucket token, needed only if you turn Bitbucket on.
 
 ## How settings are read
 
@@ -39,6 +39,23 @@ export SHIPSAFE_ALLOWED_ROOT=/home/me/approved-repos
 
 Then `POST /api/scans` with `repository_path`, `base_ref`, and `head_ref`. The dashboard has no control for choosing a non-demo repository.
 
+## Bitbucket Cloud settings
+
+Optional. With none of these set, Bitbucket is off and ShipSafe behaves exactly as before.
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `SHIPSAFE_BITBUCKET_WORKSPACE` | yes | Workspace slug. |
+| `SHIPSAFE_BITBUCKET_REPOSITORIES` | yes | Comma-separated repository slugs ShipSafe may read. This is an allowlist: no other repository in the workspace is reachable. |
+| `SHIPSAFE_BITBUCKET_TOKEN` | yes | **Secret.** Alone, it is sent as `Authorization: Bearer` (repository, project, or workspace access token). With the e-mail below, it is sent as Basic auth (Atlassian API token). |
+| `SHIPSAFE_BITBUCKET_EMAIL` | no | Atlassian account e-mail. Set only when the token is a scoped API token. |
+
+- **All or nothing.** If any of the four is set, the three required ones must all be set. A partial configuration (for example a workspace without a token), an invalid slug, an empty repository list, or a token that cannot be sent in a header raises `ConfigError` and the API does not start. Error messages name the variable, never its value.
+- **Scope.** Give the credential read access to repositories and pull requests only. ShipSafe makes no Bitbucket writes.
+- **Where the token lives.** Only in your local `.env` (git-ignored) or an approved secret store. Never commit it, paste it into a chat or prompt, or put it in a `VITE_*` variable.
+- **Where it does not appear.** The token is wrapped in `config.Secret`: it is absent from `repr(settings)`, cannot be copied by `dataclasses.asdict`, serialised to JSON, or pickled, and is not in any log line or API response (`backend/tests/test_bitbucket_settings.py`). Only the HTTP client that talks to `api.bitbucket.org` receives it.
+- **Current limit.** At startup the API builds the read-only connector from these settings and sends no request. No API route or dashboard screen uses it yet, and it has never been run against live Bitbucket.
+
 ## Network binding
 
 Not configurable, on purpose.
@@ -58,4 +75,4 @@ The API has no authentication. Do not start it with `--host 0.0.0.0` or put it b
 
 ## Not implemented
 
-There are no Bitbucket, Claude, or other credential settings, and no code that would read them. Phase 2 defines the Bitbucket variables; they must be read-only credentials kept in a local `.env` or an approved secret store, never committed, logged, or sent to the browser.
+There are no Claude or other credential settings besides the Bitbucket token above, and no code that would read them.

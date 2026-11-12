@@ -105,7 +105,7 @@ The UI can only choose among the demo repository's branches. Scanning another au
 
 `demo_seed.ensure_demo_repo()` runs at API startup. It writes the LedgerLite files, commits them on `main`, and creates six branches, each one commit on top of `main`: `feature/release-candidate`, `feature/auth-regression`, `feature/pricing-regression`, `feature/api-breaking`, `feature/docs-only`, `feature/safe-cleanup`. It is idempotent: a complete repository is left untouched, and a branch that is missing or has no commit of its own (a seed interrupted part way) is rebuilt from `main`. Repair never discards work: if a tracked file carries an uncommitted change that the seeder itself did not write, startup fails with a `ConfigError` naming the file; untracked files are neither removed nor committed (only the demo's own files are ever `git add`ed). It refuses, with `ConfigError`, to touch a non-empty directory that is not a repository or a repository it did not generate; a generated repository is recognised by the `shipsafe.demo=true` marker in its config, or, for repositories seeded before the marker existed, by the root commit's subject *and* synthetic author e-mail. Demo commits are made with `commit.gpgsign=false` in the repository's own config. These are the only Git writes ShipSafe ever makes, and only inside the demo directory. `GET /api/demo` serves `DEMO_BRANCHES` as the branch picker's data.
 
-Settings are three optional `SHIPSAFE_*` environment variables plus the frontend's `VITE_API_BASE`; see `docs/CONFIGURATION.md`. No setting holds a secret.
+Settings are three optional `SHIPSAFE_*` environment variables, four optional `SHIPSAFE_BITBUCKET_*` variables (all-or-nothing), plus the frontend's `VITE_API_BASE`; see `docs/CONFIGURATION.md`. The Bitbucket token is the only secret; `config.Secret` keeps it out of `repr`, JSON, and logs.
 
 ## Tests
 
@@ -132,7 +132,7 @@ Where Bitbucket work attaches, and what each point still lacks:
 | Renames | `FileDelta.status` | Renames are reported as a delete plus an add |
 | Truncated or oversized diffs | `ChangeSet.truncated` / `ChangeSet.omitted` | Surfaced in the report, UI, and ZIP since the Phase 1 remediation. A remote provider must fill `omitted` itself |
 | Commit binding and stale detection | `ChangeSet.base_sha` / `head_sha` (full SHAs) | The report and database keep 12 characters; proposed migration 2 in `docs/MIGRATIONS.md` |
-| Credentials and workspace settings | `config.Settings` | No credential fields exist; nothing reads a token |
+| Credentials and workspace settings | `config.Settings.bitbucket` | Done 2026-11-12 (P2 task 2): settings load and `create_app` builds the provider into `app.state.bitbucket`. No route uses it yet |
 | Repository and PR screens | `frontend/src/types.ts`, `api<T>()` | One single-file component (`App.tsx`), no router, no test harness; no repository or PR endpoints to call |
 | HTTP calls to Bitbucket | — | No application code makes outbound HTTP calls; `httpx` is in `requirements.txt` but is used only by the test client |
 
@@ -150,7 +150,7 @@ ChangeProvider       resolve_commit(repository, ref) -> full SHA
 Scan orchestration   scanner.scan_changes(provider: ChangeProvider, repository, base, head) -> Report
 ```
 
-`LocalGitProvider` implements `RepositoryProvider` and `ChangeProvider`. Since 2026-11-12 (Phase 2, unmerged) `providers/bitbucket.py` holds `BitbucketCloudProvider`, which implements all three protocols and is tested against mocked HTTP only; the application does not construct it yet. `test_scan_orchestration_works_with_a_non_git_provider` runs the orchestration against an in-memory provider to show the seam does not depend on Git or the filesystem. Field-level documentation is in the dataclass docstrings.
+`LocalGitProvider` implements `RepositoryProvider` and `ChangeProvider`. Since 2026-11-12 (Phase 2, unmerged) `providers/bitbucket.py` holds `BitbucketCloudProvider`, which implements all three protocols and is tested against mocked HTTP only; `create_app` constructs it when `SHIPSAFE_BITBUCKET_*` is configured (`app.state.bitbucket`, otherwise `None`), but no route calls it yet. `test_scan_orchestration_works_with_a_non_git_provider` runs the orchestration against an in-memory provider to show the seam does not depend on Git or the filesystem. Field-level documentation is in the dataclass docstrings.
 
 ## Security boundaries
 

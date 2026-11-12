@@ -16,7 +16,7 @@ from .config import load_settings
 from .db import migrate, session
 from .demo_seed import DEMO_BRANCHES, ensure_demo_repo
 from .errors import RepositoryAccessDenied, ScanError
-from .providers import LocalGitProvider
+from .providers import BitbucketCloudProvider, LocalGitProvider
 from .scanner import git, scan_changes
 
 
@@ -41,6 +41,13 @@ def create_app(
     # Deny by default: only the synthetic repository is scannable unless
     # SHIPSAFE_ALLOWED_ROOT names a directory you explicitly trust.
     provider = LocalGitProvider(settings.allowed_roots)
+    # Built only when SHIPSAFE_BITBUCKET_* is fully configured; no request is
+    # sent here. Invalid slugs raise ConfigError, so the API does not start.
+    # No route uses it yet (Phase 2 task 4).
+    bitbucket = BitbucketCloudProvider(
+        settings.bitbucket.workspace, settings.bitbucket.repositories,
+        token=settings.bitbucket.token.reveal(), email=settings.bitbucket.email,
+    ) if settings.bitbucket else None
 
     def connection():
         return session(db_file)
@@ -52,6 +59,7 @@ def create_app(
         yield
 
     app = FastAPI(title="ShipSafe API", version="0.2.0", lifespan=lifespan)
+    app.state.bitbucket = bitbucket
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

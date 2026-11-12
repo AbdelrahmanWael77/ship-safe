@@ -76,4 +76,12 @@ Problem / tradeoff: The Phase 2 prompt expects Phase 1 to be reviewed and merged
 Decision: Phase 2 work goes on `feat/p2-bitbucket-provider`, branched from `feat/p1-foundation`. `main` is untouched; Phase 1 still needs its human review and merge. The provider targets Bitbucket **Cloud** (the prompt's default); Data Center would be a separate provider. Agents follow `AGENTS.md` and hand off through `docs/IMPLEMENTATION_STATUS.md` and `NEXT_AGENT_PROMPT.md`.
 Alternatives considered: Wait for the Phase 1 merge (stalls); commit Phase 2 onto the Phase 1 branch (mixes reviews).
 Security / product impact: A Phase 1 review finding may require rebasing Phase 2. No live Bitbucket access has been configured or used.
-Related ticket / commit: `feat/p2-bitbucket-provider` (uncommitted at the time of writing)
+Related ticket / commit: `feat/p2-bitbucket-provider`, commit `08b3b1b`
+
+## 2026-11-12 — Bitbucket settings: all-or-nothing, token wrapped in `Secret`
+Decision owner: Nour Waled (confirm or object before merge)
+Problem / tradeoff: The token is the first secret in `Settings`. A plain string field would show in `repr(settings)` and in any dump of the settings; a half-set configuration could start the API silently without the integration.
+Decision: `SHIPSAFE_BITBUCKET_WORKSPACE`, `_REPOSITORIES`, `_TOKEN` are required together (`_EMAIL` optional); anything partial or malformed raises `ConfigError` at startup, naming variables only. The token is held in `config.Secret`, which hides itself in `repr`/`str` and refuses copy, `asdict`, JSON, and pickle. `create_app` builds the provider into `app.state.bitbucket` and sends no request at startup.
+Alternatives considered: `field(repr=False)` on a string (still leaks through `asdict`/JSON); validating credentials against Bitbucket at startup (network call on every start, and the demo must start offline).
+Security / product impact: A wrong token is discovered on first use, not at startup. No route exposes the provider yet.
+Related ticket / commit: P2 task 2, `feat/p2-bitbucket-settings`

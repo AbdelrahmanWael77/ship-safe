@@ -7,53 +7,59 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 - **Roadmap:** `prompts/PHASE-01-FOUNDATION.md` … `PHASE-05-FINAL-VALIDATION.md`; gates in `docs/ACCEPTANCE_MATRIX.md`
 - **Current phase:** 2 — Bitbucket repositories and pull requests (`prompts/PHASE-02-BITBUCKET.md`)
 - **Last updated:** 2026-11-12
-- **Branch / latest commit:** `feat/p2-bitbucket-provider`, stacked on `feat/p1-foundation` at `9ed331c`. Everything listed under "Changed files" is **uncommitted** (no commit was authorized).
+- **Branch / latest commit:** `feat/p2-bitbucket-provider` at `08b3b1b` (committed and pushed; holds P2 task 1 and the handoff system), stacked on `feat/p1-foundation` at `9ed331c`. P2 task 2 is committed on `feat/p2-bitbucket-settings`, cut from `08b3b1b` (the branch head is the task 2 commit; commit and push were authorized by the owner on 2026-11-12).
 
 ### Completed and verified
 - Baseline v0.2 ("Phase 0") — imported as `10f3cee`.
 - Phase 1 — complete on `feat/p1-foundation` (101 backend tests, frontend build; see matrix). **Not merged to `main`, not tagged**; human review is still open.
 - Agent handoff system installed 2026-11-12: `AGENTS.md`, entry section in `CLAUDE.md`, this checkpoint, `NEXT_AGENT_PROMPT.md`.
-- P2 task 1 — read-only Bitbucket Cloud provider (`backend/app/providers/bitbucket.py`) implementing all three provider protocols. Mocked HTTP only.
+- P2 task 1 — read-only Bitbucket Cloud provider (`backend/app/providers/bitbucket.py`) implementing all three provider protocols. Mocked HTTP only. Committed in `08b3b1b`.
+- P2 task 2 — Bitbucket settings and credential loading. `config.load_settings` reads the four `SHIPSAFE_BITBUCKET_*` variables; `create_app` builds the provider only when configured. 32 new tests.
 
 ### Phase 2 task list (order; one task at a time)
 1. [x] Bitbucket Cloud provider + mocked-HTTP tests
-2. [ ] Bitbucket settings and credential loading (**next**)
-3. [ ] Migration 2: provider / repository / PR / full base+head SHA columns, stale flag
+2. [x] Bitbucket settings and credential loading
+3. [ ] Migration 2: provider / repository / PR / full base+head SHA columns, stale flag (**next**)
 4. [ ] API: list repositories, list PRs, scan a PR bound to exact SHAs, stale detection
 5. [ ] Frontend: Repositories, Pull Requests, PR Analysis screens with typed client
 6. [ ] Human-run read-only live smoke test (PASS or BLOCKED), docs, gates
 
 ### Current working state
-- **Functional now:** `BitbucketCloudProvider` — allowlisted repository discovery with pagination, PR list/detail with full-SHA binding, ref resolution, two-dot change sets with per-file patches, tree listing, file reads; auth (Bearer token, or Basic e-mail + API token), 401/403/404/429/5xx/555, timeouts, bounded retries, byte and page caps. `scan_changes()` produces a report from it.
-- **Not wired:** no settings, no API route, no UI, no database column uses it. Nothing in the running app constructs the provider.
-- **Changed files (uncommitted):**
-  - `AGENTS.md`, `NEXT_AGENT_PROMPT.md` — new, handoff system
-  - `CLAUDE.md` — agent entry section added at the top
-  - `docs/IMPLEMENTATION_STATUS.md` — this checkpoint; two Bitbucket rows in the table
-  - `docs/DECISIONS.md` — Phase 2 start and Bitbucket Cloud entry
-  - `backend/app/providers/bitbucket.py` — new provider
-  - `backend/app/providers/__init__.py` — exports `BitbucketCloudProvider`
-  - `backend/app/providers/base.py` — docstring only
-  - `backend/app/errors.py` — `ProviderAuthError`, `ProviderUnavailable`
-  - `backend/tests/test_bitbucket_provider.py` — new, 38 tests
-- **Tests (2026-11-12, Windows 11, Python 3.12.4, `.venv`):**
-  - `cd backend && python -m pytest -q tests/test_bitbucket_provider.py` → 38 passed in 0.30 s
-  - `cd backend && python -m pytest -q` → 139 passed, 1 warning in 270.52 s (101 existing + 38 new)
-  - Frontend build not re-run (no frontend change).
+- **Functional now:**
+  - `BitbucketCloudProvider` — allowlisted repository discovery with pagination, PR list/detail with full-SHA binding, ref resolution, two-dot change sets with per-file patches, tree listing, file reads; auth (Bearer token, or Basic e-mail + API token), 401/403/404/429/5xx/555, timeouts, bounded retries, byte and page caps. `scan_changes()` produces a report from it.
+  - Settings: `Settings.bitbucket` is `None` unless `SHIPSAFE_BITBUCKET_WORKSPACE`, `_REPOSITORIES`, `_TOKEN` are all set (`_EMAIL` optional). Partial, blank-list, bad-slug, or unsendable-token configurations raise `ConfigError` (variable names only in the message). The token is a `config.Secret`: hidden in `repr`/`str`, refuses `asdict`, JSON, pickle.
+  - Startup: `create_app` builds the provider into `app.state.bitbucket` (else `None`). No request is sent at startup; a wrong token is found only on first use.
+- **Not wired:** no API route, no UI, no database column uses the provider. `app.state.bitbucket` is read by nothing yet.
+- **Changed files (task 2 commit on `feat/p2-bitbucket-settings`):**
+  - `backend/app/config.py` — `Secret`, `BitbucketSettings`, `Settings.bitbucket`, `_bitbucket()`
+  - `backend/app/main.py` — builds the provider, `app.state.bitbucket`
+  - `backend/tests/test_bitbucket_settings.py` — new, 32 tests
+  - `.env.example`, `docs/CONFIGURATION.md` — the four variables and the secret-handling rules
+  - `docs/ARCHITECTURE.md` — three lines on settings and provider construction
+  - `docs/DECISIONS.md` — settings decision; corrected the stale "uncommitted" note on the Phase 2 entry
+  - `docs/IMPLEMENTATION_STATUS.md`, `NEXT_AGENT_PROMPT.md` — this checkpoint and the handoff
+- **Tests (2026-11-12, Linux cloud container, Python 3.13.18, fresh virtualenv from `backend/requirements.txt`):**
+  - Baseline before any edit, at `08b3b1b`: `cd backend && python -m pytest -q` → 139 passed, 1 warning in 14.96 s
+  - `cd backend && python -m pytest -q tests/test_bitbucket_settings.py` → 32 passed, 1 warning
+  - `cd backend && python -m pytest -q` → 171 passed, 1 warning (139 existing + 32 new)
+  - Real server check: `uvicorn app.main:app` with a fake workspace, repository and token started, `GET /api/health` returned 200, and the debug log did not contain the token. With only `SHIPSAFE_BITBUCKET_WORKSPACE` set, startup failed with `ConfigError` naming the two missing variables.
+  - **Not re-run on Windows** (the earlier runs were Windows 11, Python 3.12.4, about four minutes per full run). Frontend build not re-run (no frontend change).
 
 ### Blockers / known issues
-- **Live Bitbucket: NOT TESTED.** No credentials were used and no request has ever left the machine for `api.bitbucket.org`. Payload shapes come from Bitbucket's OpenAPI file, not from observed responses.
+- **Live Bitbucket: NOT TESTED.** No credentials were used and no request has ever left the machine for `api.bitbucket.org`. Payload shapes come from Bitbucket's OpenAPI file, not from observed responses. The settings tests use a made-up token and send nothing.
 - Phase 1 is unmerged; Phase 2 is stacked on it by the owner's instruction (see `docs/DECISIONS.md`).
+- The provider's HTTP client is never closed (it lives for the whole process); revisit if `create_app` is ever called repeatedly in one long-lived process.
 - `scanner.import_dependencies` reads every unchanged `.py` file in the tree: over Bitbucket that is one HTTP request per file. Needs a cap or skip before PR scans run on a real repository (task 4).
 - HTTP 555 (diff too large) fails the comparison; there is no per-file fallback.
 - Pull requests from forks: the head SHA is left unset when the commit cannot be read through the approved repository.
 - `get_changes` is a two-dot comparison, as the protocol requires. PR scans must pass the merge base as `base` (Bitbucket `GET /merge-base/{revspec}`) or record a different choice; undecided until task 4.
 
 ### Next exact task
-- **Goal:** Bitbucket settings — `SHIPSAFE_BITBUCKET_WORKSPACE`, `SHIPSAFE_BITBUCKET_REPOSITORIES` (comma-separated slugs), `SHIPSAFE_BITBUCKET_TOKEN`, optional `SHIPSAFE_BITBUCKET_EMAIL`; build the provider at startup only when configured.
-- **Likely files:** `backend/app/config.py`, `backend/app/main.py` (construction only, no routes), `.env.example`, `docs/CONFIGURATION.md`, new tests in `backend/tests/`.
-- **Done when:** tests show the app starts unchanged with no Bitbucket variables; a partial configuration raises `ConfigError`; the token never appears in `repr(settings)`, logs, or any API response; full suite passes.
-- **Avoid:** adding routes or schema changes (tasks 3–4); rewriting the provider; asking the user to paste a token into chat.
+- **Goal:** Migration 2 — add `provider`, `repository_id`, `pull_request_id`, `base_commit`, `head_commit` (full SHAs) to `scans`, plus the stale flag, following the proposal in `docs/MIGRATIONS.md`. Existing rows must survive unchanged.
+- **Likely files:** `backend/app/db.py` (`MIGRATIONS`), `docs/MIGRATIONS.md`, new tests in `backend/tests/` (style: the migration tests in `test_foundation.py`), `backend/app/main.py` only if local scans should start filling the new columns.
+- **Done when:** a version-1 database with rows migrates to version 2 with those rows byte-identical in the old columns; failure rolls back; a newer database is still refused; local scans and review import still pass; full suite passes.
+- **Decide and record first:** where "stale" lives (stored column vs. computed by comparing `head_commit` with the PR's current head — `docs/MIGRATIONS.md` proposes computed), and the two open questions at the end of `docs/MIGRATIONS.md`.
+- **Avoid:** adding routes (task 4); rewriting stored `report_json`; storing credentials in the database.
 
 ### Deferred (existing roadmap only)
 Phase 3 Claude review binding, Phase 4 isolated test runner, Phase 5 release assessment — see `prompts/`.
@@ -80,8 +86,9 @@ Labels: IMPLEMENTED (code and passing tests exist), PARTIAL (works within stated
 | React dashboard: behaviour in a browser | PARTIAL | Scripted headless-Chrome runs passed: default scan, all pages, review import, restart (2026-11-11); all six demo branches scanned from the UI with export JSON and handoff ZIP verified per scan (2026-11-12, 33 checks). No human click-through, no visual or layout check, no frontend tests in the repository | Human check before merge |
 | Dashboard UI for scanning a non-demo repository | NOT IMPLEMENTED | API only (`repository_path`) | Phase 2 |
 | Provider interfaces (repository, PR, change, orchestration) | IMPLEMENTED | `providers/base.py`; exercised by a local and an in-memory provider | Phase 2 builds on these |
-| Pull-request discovery | PARTIAL | `BitbucketCloudProvider` implements the protocol; `test_bitbucket_provider.py` (mocked HTTP). Not reachable from the API or UI (2026-11-12, `feat/p2-bitbucket-provider`, uncommitted) | Phase 2 |
-| Bitbucket Cloud repository and PR discovery | PARTIAL | Provider class only, mocked HTTP only; no settings, routes, or UI; never run against live Bitbucket | Phase 2 |
+| Pull-request discovery | PARTIAL | `BitbucketCloudProvider` implements the protocol; `test_bitbucket_provider.py` (mocked HTTP). Not reachable from the API or UI (2026-11-12, `feat/p2-bitbucket-provider`, `08b3b1b`) | Phase 2 |
+| Bitbucket Cloud repository and PR discovery | PARTIAL | Provider class, mocked HTTP only; no routes or UI; never run against live Bitbucket | Phase 2 |
+| Bitbucket settings and credential loading | IMPLEMENTED | `test_bitbucket_settings.py` (32 tests): all-or-nothing variables, `ConfigError` on partial or malformed values, token absent from `repr`, logs, and every GET route. Unmerged (2026-11-12, `feat/p2-bitbucket-settings`); the provider it builds is used by no route | Phase 2 |
 | Commit-scoped Bitbucket scans and stale detection | NOT IMPLEMENTED | Reports store 12-character SHAs only | Phase 2 |
 | Automated Claude or other model invocation | NOT IMPLEMENTED | By design; handoff is manual | Not planned |
 | Secure regression test runner | NOT IMPLEMENTED | No repository code is ever executed | Phase 4 |

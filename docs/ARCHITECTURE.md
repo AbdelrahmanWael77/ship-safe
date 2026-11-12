@@ -90,10 +90,10 @@ SQLite file at `SHIPSAFE_DB_PATH` (default `backend/.shipsafe-data/scans.db`, gi
 
 | Table | Columns |
 |---|---|
-| `scans` | `id` TEXT PK, `created_at` TEXT, `report_json` TEXT |
+| `scans` | `id` TEXT PK, `created_at` TEXT, `report_json` TEXT; since version 2: `provider` TEXT (default `local-git`), `repository_id`, `pull_request_id`, `base_commit`, `head_commit` (full SHAs), `stale_at`; index `(provider, repository_id, pull_request_id, created_at)` |
 | `ai_reviews` | `id` TEXT PK, `scan_id` TEXT → `scans.id`, `imported_at` TEXT, `review_json` TEXT; index `(scan_id, imported_at)` |
 
-Schema version is `PRAGMA user_version` (currently 1, identical to the v0.2 schema). Mechanism, rules, and the proposed Bitbucket-metadata migration are in `docs/MIGRATIONS.md`. Rows are never updated or deleted by any code path.
+Schema version is `PRAGMA user_version` (currently 2; version 1 is identical to the v0.2 schema). Mechanism, rules, and version 2 are in `docs/MIGRATIONS.md`. Rows are never deleted and `report_json` is never rewritten; the only update is `db.sync_stale` setting or clearing `scans.stale_at`, which no route calls yet.
 
 ## Frontend (`frontend/src`)
 
@@ -131,7 +131,7 @@ Where Bitbucket work attaches, and what each point still lacks:
 | Merge-base comparison | `ChangeProvider.get_changes()` | The local provider diffs the two commits directly (`git diff base head`), not from the merge base; Phase 2 must choose and document PR semantics |
 | Renames | `FileDelta.status` | Renames are reported as a delete plus an add |
 | Truncated or oversized diffs | `ChangeSet.truncated` / `ChangeSet.omitted` | Surfaced in the report, UI, and ZIP since the Phase 1 remediation. A remote provider must fill `omitted` itself |
-| Commit binding and stale detection | `ChangeSet.base_sha` / `head_sha` (full SHAs) | The report and database keep 12 characters; proposed migration 2 in `docs/MIGRATIONS.md` |
+| Commit binding and stale detection | `scans.base_commit` / `head_commit` / `stale_at`, `db.insert_scan`, `db.sync_stale` | Columns and helpers exist since migration 2 (P2 task 3); local scans fill the commits. No pull request scan exists and nothing calls `sync_stale` until task 4. The report JSON still keeps 12 characters |
 | Credentials and workspace settings | `config.Settings.bitbucket` | Done 2026-11-12 (P2 task 2): settings load and `create_app` builds the provider into `app.state.bitbucket`. No route uses it yet |
 | Repository and PR screens | `frontend/src/types.ts`, `api<T>()` | One single-file component (`App.tsx`), no router, no test harness; no repository or PR endpoints to call |
 | HTTP calls to Bitbucket | — | No application code makes outbound HTTP calls; `httpx` is in `requirements.txt` but is used only by the test client |

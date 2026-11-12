@@ -224,9 +224,9 @@ def test_existing_v0_2_database_is_adopted_without_touching_history(tmp_path, de
         assert client.get(f"/api/scans/{report['id']}").json() == report
         assert client.get(f"/api/scans/{report['id']}/ai/handoff").status_code == 200
 
-    assert db.schema_version(db_file) == db.LATEST_VERSION == 1
+    assert db.schema_version(db_file) == db.LATEST_VERSION
     assert rows(db_file) == before
-    assert db.migrate(db_file) == 1  # idempotent
+    assert db.migrate(db_file) == db.LATEST_VERSION  # idempotent
     assert rows(db_file) == before
 
 
@@ -234,7 +234,7 @@ def test_database_from_a_newer_build_is_refused_and_left_untouched(tmp_path):
     db_file = tmp_path / "scans.db"
     db.migrate(db_file)
     conn = sqlite3.connect(db_file)
-    conn.execute("INSERT INTO scans VALUES ('s1', '2026-01-01T00:00:00+00:00', '{}')")
+    conn.execute("INSERT INTO scans (id, created_at, report_json) VALUES ('s1', '2026-01-01T00:00:00+00:00', '{}')")
     conn.execute("PRAGMA user_version = 99")
     conn.commit()
     conn.close()
@@ -246,8 +246,9 @@ def test_database_from_a_newer_build_is_refused_and_left_untouched(tmp_path):
 
 def test_failed_migration_rolls_back_completely(tmp_path):
     db_file = tmp_path / "scans.db"
-    db.migrate(db_file)
-    broken = db.MIGRATIONS + (db.Migration(2, "broken", (
+    baseline = db.MIGRATIONS[:1]  # version 1; the real migration 2 is covered in test_migration_2.py
+    db.migrate(db_file, baseline)
+    broken = baseline + (db.Migration(2, "broken", (
         "ALTER TABLE scans ADD COLUMN provider TEXT",
         "THIS IS NOT SQL",
     )),)
@@ -264,7 +265,8 @@ def test_additive_migration_preserves_rows(tmp_path):
     db_file = tmp_path / "scans.db"
     db.migrate(db_file)
     with db.session(db_file) as conn:
-        conn.execute("INSERT INTO scans VALUES ('s1', '2026-01-01T00:00:00+00:00', '{}')")
-    additive = db.MIGRATIONS + (db.Migration(2, "example additive column", ("ALTER TABLE scans ADD COLUMN example TEXT",)),)
-    assert db.migrate(db_file, additive) == 2
+        conn.execute("INSERT INTO scans (id, created_at, report_json) VALUES ('s1', '2026-01-01T00:00:00+00:00', '{}')")
+    following = db.LATEST_VERSION + 1
+    additive = db.MIGRATIONS + (db.Migration(following, "example additive column", ("ALTER TABLE scans ADD COLUMN example TEXT",)),)
+    assert db.migrate(db_file, additive) == following
     assert [row[0] for row in rows(db_file)] == ["s1"]

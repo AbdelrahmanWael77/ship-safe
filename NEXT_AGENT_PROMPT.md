@@ -2,29 +2,30 @@
 
 You are joining **ShipSafe**, an existing project, mid-implementation. The v0.2 baseline and Phase 1 are finished. **Do not restart the project, re-plan its phases, or redo completed work.**
 
-Read `AGENTS.md`, `CLAUDE.md`, and the checkpoint at the top of `docs/IMPLEMENTATION_STATUS.md`. Read only `prompts/PHASE-02-BITBUCKET.md`, `docs/MIGRATIONS.md`, and the code your task touches. Verify the checkpoint below against `git status` and the tests before trusting it.
+Read `AGENTS.md`, `CLAUDE.md`, and the checkpoint at the top of `docs/IMPLEMENTATION_STATUS.md`. Read only `prompts/PHASE-02-BITBUCKET.md` and the code your task touches. Verify the checkpoint below against `git status`, `git log`, and the tests before trusting it.
 
 **Current phase:** 2 — Bitbucket repositories and pull requests.
 
-**Next atomic task (P2 task 3):** Migration 2. Add `provider`, `repository_id`, `pull_request_id`, `base_commit`, `head_commit` (full 40-character SHAs) to `scans`, plus stale detection support, following the proposal in `docs/MIGRATIONS.md`. Existing rows must survive unchanged. No routes.
+**Next atomic task (P2 task 4):** API over the Bitbucket provider. List approved repositories, list a repository's open pull requests, scan a pull request bound to its exact base and head SHAs, and stale detection. Backend only; mocked HTTP only.
 
-**Relevant files:** `backend/app/db.py` (`MIGRATIONS`, `migrate`), `docs/MIGRATIONS.md` (rules and the proposed SQL), the migration tests in `backend/tests/test_foundation.py` (style to follow), `backend/app/main.py` (`create_scan` insert, only if local scans should fill the new columns).
+**Relevant files:** `backend/app/main.py` (routes; the provider is at `app.state.bitbucket`, `None` when not configured), `backend/app/db.py` (`insert_scan`, `sync_stale`), `backend/app/scanner.py` (`scan_change_set`, `import_dependencies`), `backend/app/providers/bitbucket.py` and `base.py` (read, do not rewrite), `backend/tests/test_bitbucket_provider.py` (mocked transport to reuse), `docs/ARCHITECTURE.md` (API table).
 
 **Already implemented:**
-- P2 task 1 (`08b3b1b`): `backend/app/providers/bitbucket.py`, read-only Bitbucket Cloud provider, 38 mocked-HTTP tests.
-- P2 task 2: `backend/app/config.py` reads `SHIPSAFE_BITBUCKET_WORKSPACE`, `_REPOSITORIES`, `_TOKEN`, optional `_EMAIL` into `Settings.bitbucket` (all-or-nothing; `ConfigError` otherwise; token held in `config.Secret`). `create_app` builds the provider into `app.state.bitbucket`, or `None`. Nothing reads `app.state.bitbucket` yet: no route, no schema, no UI.
+- Task 1 (`08b3b1b`): read-only `BitbucketCloudProvider`, 38 mocked-HTTP tests.
+- Task 2 (`ebc9068`): `SHIPSAFE_BITBUCKET_*` settings, `config.Secret`, provider built at startup into `app.state.bitbucket`. 32 tests.
+- Task 3: schema version 2 — `scans` has `provider`, `repository_id`, `pull_request_id`, `base_commit`, `head_commit`, `stale_at`. `db.insert_scan` stores a report with its binding (full SHAs only). `db.sync_stale` sets or clears `stale_at` for one pull request given its current head. Local scans already fill provider, repository and SHAs. 17 tests. Nothing calls `sync_stale` yet and no response exposes the new columns.
 
 **Tests last run (2026-11-12, Linux cloud container, Python 3.13.18):**
-- `cd backend && python -m pytest -q tests/test_bitbucket_settings.py` → 32 passed
-- `cd backend && python -m pytest -q` → 171 passed, 1 warning (139 existing + 32 new)
-- Not re-run on Windows after task 2. On Windows use `.venv\Scripts\python`; the full suite took about four minutes there.
+- `cd backend && python -m pytest -q tests/test_migration_2.py tests/test_foundation.py` → 32 passed
+- `cd backend && python -m pytest -q` → 188 passed, 1 warning
+- Not re-run on Windows since `08b3b1b`. On Windows use `.venv\Scripts\python`; the full suite took about four minutes there.
 
-**Branch / commit / uncommitted edits:** `feat/p2-bitbucket-provider` at `08b3b1b` (stacked on `feat/p1-foundation` at `9ed331c`). Task 2 is committed on `feat/p2-bitbucket-settings`, cut from `08b3b1b`; start task 3 from that branch's head, on a new `feat/p2-<ticket>` branch. No uncommitted edits. Commit only if the owner says so; never touch `main` or push without approval.
+**Branch / commit / uncommitted edits:** GitHub has no `main`; the default branch is `feat/p1-foundation` (`98c9d92`, already contains task 1 through pull request #1). Stacked on `08b3b1b`: `feat/p2-bitbucket-settings` (`ebc9068`, task 2) → `feat/p2-migration-2` (task 3, branch head). Both are committed but were **not pushed** (no GitHub credential in the agent session); check `git ls-remote origin`. No uncommitted edits. Start task 4 on a new `feat/p2-<ticket>` branch from `feat/p2-migration-2`. Commit or push only if the owner says so; never commit directly to `feat/p1-foundation`.
 
-**Known blockers:** live Bitbucket is NOT TESTED (no credentials; never ask for a token in chat). Phase 1 is unmerged. Open design points for task 4 are listed under "Blockers / known issues" in the checkpoint (merge-base semantics, per-file HTTP cost of import analysis, HTTP 555, fork PRs).
+**Known blockers:** live Bitbucket is NOT TESTED (no credentials; never ask for a token in chat). A database opened by this code becomes version 2 and older branches refuse it; use a separate `SHIPSAFE_DB_PATH` when switching back.
 
-**Decide and record in `docs/DECISIONS.md` before coding:** whether "stale" is a stored column or computed by comparing `head_commit` with the pull request's current head (`docs/MIGRATIONS.md` proposes computed), and the two open questions at the end of `docs/MIGRATIONS.md`.
+**Decide and record in `docs/DECISIONS.md` before coding** (see "Blockers / known issues" in the checkpoint): merge-base semantics for PR scans (`get_changes` is two-dot; Bitbucket has `GET /merge-base/{revspec}`), a cap or skip for `import_dependencies` (one HTTP request per file today), HTTP 555 on large diffs, fork pull requests with no readable head SHA, and the request/response shapes agreed with the frontend owner.
 
-**Acceptance check for the next task:** a version-1 database with rows migrates to version 2 with those rows unchanged in the old columns and `provider = 'local-git'`; a failed migration rolls back completely; a database from a newer build is still refused; existing scan, export, and review-import tests pass; new tests cover each case; full suite passes.
+**Acceptance check for the next task:** with mocked HTTP, repository list → PR list → PR scan → stored report works end to end; the stored row has `provider = 'bitbucket-cloud'`, `repository_id`, `pull_request_id` and full SHAs; scanning after the PR head moves marks earlier scans stale and the API shows it; every Bitbucket route answers clearly when Bitbucket is not configured; provider errors map to HTTP statuses without leaking the token; local scanning and review import are unchanged; full suite passes.
 
 Implement only that task, run focused tests plus the full backend suite, then update the checkpoint in `docs/IMPLEMENTATION_STATUS.md`, any gate backed by executed evidence, and this file for the following agent. Keep your reply under six lines. Do not claim success without checking.

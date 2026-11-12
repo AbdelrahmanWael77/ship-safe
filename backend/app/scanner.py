@@ -9,7 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .errors import ScanError
-from .providers.base import MAX_CHANGED_FILES, ChangeProvider, RepositoryRef, valid_ref
+from .providers.base import MAX_CHANGED_FILES, ChangeProvider, ChangeSet, RepositoryRef, valid_ref
 from .providers.local_git import LocalGitProvider, run_git as git
 
 __all__ = ["ScanError", "git", "valid_ref", "scan_changes", "scan_repository", "analyze_risks"]
@@ -188,8 +188,16 @@ def scan_repository(repo: Path, base: str, head: str) -> dict:
 
 
 def scan_changes(provider: ChangeProvider, repository: RepositoryRef, base: str, head: str) -> dict:
+    """Scan and return the report alone. See ``scan_change_set``."""
+    return scan_change_set(provider, repository, base, head)[0]
+
+
+def scan_change_set(provider: ChangeProvider, repository: RepositoryRef, base: str, head: str) -> tuple[dict, ChangeSet]:
     """Scan orchestration: fetch a change set from any provider, run the static
     heuristics, and build the report. Reads only; executes nothing.
+
+    Returns ``(report, changes)``. ``changes`` carries the full commit SHAs
+    the scan was bound to; the report keeps its 12-character form.
 
     The returned dict is the persisted report and the public ``Report`` API
     type. Its v0.2 shape is preserved; Phase 1 added only the completeness
@@ -234,7 +242,7 @@ def scan_changes(provider: ChangeProvider, repository: RepositoryRef, base: str,
             "category": finding["category"], "file": finding["file"],
             "scenario": suggestions.get(finding["category"], "Exercise changed behavior and affected consumers."),
         })
-    return {
+    report = {
         "id": str(uuid4()), "created_at": datetime.now(timezone.utc).isoformat(),
         "repo_name": repository.name, "repository_path": repository.location, "base_ref": base,
         "head_ref": head, "base_sha": base_sha[:12], "head_sha": head_sha[:12],
@@ -254,3 +262,4 @@ def scan_changes(provider: ChangeProvider, repository: RepositoryRef, base: str,
         "test_suggestions": test_suggestions,
         "disclaimer": "Heuristic static analysis only. Findings are suspected risks, not confirmed failures. No repository code or tests were executed.",
     }
+    return report, changes

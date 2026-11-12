@@ -85,3 +85,16 @@ Decision: `SHIPSAFE_BITBUCKET_WORKSPACE`, `_REPOSITORIES`, `_TOKEN` are required
 Alternatives considered: `field(repr=False)` on a string (still leaks through `asdict`/JSON); validating credentials against Bitbucket at startup (network call on every start, and the demo must start offline).
 Security / product impact: A wrong token is discovered on first use, not at startup. No route exposes the provider yet.
 Related ticket / commit: P2 task 2, `feat/p2-bitbucket-settings`
+
+## 2026-11-12 — Migration 2: stored stale marker, no backfill, PR metadata fetched live
+Decision owner: Mohamed Elsayed (approved 2026-11-12); Nour Waled as migration reviewer before merge
+Problem / tradeoff: Phase 2 needs scans bound to provider, repository, pull request and exact commits, and a way to show that a scan no longer matches the pull request head. `docs/MIGRATIONS.md` left three points open.
+Decision:
+1. Stale is a **stored marker** (`scans.stale_at`, NULL = not known stale), written by `db.sync_stale` from a comparison of `head_commit` with the pull request's current head. The comparison stays the source of truth: the marker is cleared if the head returns to the scanned commit. Stored rather than only computed so history and review screens can show the badge without a Bitbucket request, and so the first observation time is kept.
+2. Existing local rows are **not backfilled** (`repository_id` and commits stay NULL). A migration that parsed `report_json` would break the additive-only rule, and 12-character SHAs cannot be turned into full ones.
+3. Pull request title, URL and author are **not stored** in columns; they are fetched live.
+4. The report JSON gains no key; full SHAs live only in the new columns. Local scans fill them now.
+5. `ai_reviews` gets no stale column; a review's staleness is its scan's.
+Alternatives considered: Computed-only staleness (every list view would need a live call per pull request); a boolean flag (loses when it was noticed); adding full SHAs to the report (changes the pinned report contract and the review digest input).
+Security / product impact: Stored reports and imported reviews are untouched. A database migrated to version 2 is refused by older builds. Until task 4 calls `sync_stale`, no scan is ever marked stale.
+Related ticket / commit: P2 task 3, `feat/p2-migration-2`

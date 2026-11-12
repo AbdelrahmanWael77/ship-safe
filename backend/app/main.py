@@ -13,11 +13,11 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .ai_handoff import AIReviewImport, MAX_IMPORT_BYTES, context_digest, handoff_zip, saved_review, validate_review_binding
 from .config import load_settings
-from .db import migrate, session
+from .db import insert_scan, migrate, session
 from .demo_seed import DEMO_BRANCHES, ensure_demo_repo
 from .errors import RepositoryAccessDenied, ScanError
 from .providers import BitbucketCloudProvider, LocalGitProvider
-from .scanner import git, scan_changes
+from .scanner import git, scan_change_set
 
 
 #: Host header values the development API answers to. Port suffixes are
@@ -90,15 +90,15 @@ def create_app(
         try:
             # The provider permits an allowed root itself or repositories under it, never unrelated paths.
             repository = provider.get_repository(body.repository_path or str(demo_root))
-            report = scan_changes(provider, repository, body.base_ref, body.head_ref)
+            report, changes = scan_change_set(provider, repository, body.base_ref, body.head_ref)
         except RepositoryAccessDenied as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ScanError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         with connection() as conn:
-            conn.execute(
-                "INSERT INTO scans (id, created_at, report_json) VALUES (?, ?, ?)",
-                (report["id"], report["created_at"], json.dumps(report)),
+            insert_scan(
+                conn, report, provider=repository.provider, repository_id=repository.id,
+                base_commit=changes.base_sha, head_commit=changes.head_sha,
             )
         return report
 

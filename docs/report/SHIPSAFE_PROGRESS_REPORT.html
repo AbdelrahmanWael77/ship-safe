@@ -1,0 +1,311 @@
+<!doctype html><meta charset=utf-8><title>ShipSafe Progress Report</title><style>body{font:16px/1.6 system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;color:#1a1a1a}img{max-width:100%;border:1px solid #ddd;border-radius:8px}table{border-collapse:collapse;width:100%;margin:1rem 0}td,th{border:1px solid #ccc;padding:6px 10px;text-align:left;vertical-align:top}th{background:#f2f4f7}code,pre{background:#f4f4f4;border-radius:4px;padding:2px 4px}pre{padding:10px;overflow:auto}blockquote{border-left:4px solid #3bb;margin:0;padding:0 1rem;color:#555}</style><h1>ShipSafe — Progress Report: Before Phase 1, Added in Phase 1, Still Missing</h1>
+<p><em>Generated 2026-11-12 from branch <code>feat/p1-foundation</code> (unreviewed, unmerged). Screenshots were captured from the running app on this machine with the synthetic LedgerLite demo repository. Statuses come from <code>docs/IMPLEMENTATION_STATUS.md</code> and an executed test run (<code>71 passed in 151s</code>).</em></p>
+<hr />
+<h2>1. Before Phase 1 — baseline v0.2 (what already existed)</h2>
+<p>A local-first dashboard: React/TypeScript/Vite frontend, FastAPI backend, real Git diff scanning, Python AST risk heuristics, SQLite scan history, and a manual Claude Code review handoff.</p>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Real Git diff scan between two branches</td>
+<td>Reads actual commits from a synthetic repo with 6 demo branches</td>
+</tr>
+<tr>
+<td>Python AST / rule heuristics</td>
+<td>3 rules: auth-guard removal, Decimal→float, removed API response key</td>
+</tr>
+<tr>
+<td>Risk score, findings, affected importers</td>
+<td>Heuristic score, not an approval</td>
+</tr>
+<tr>
+<td>SQLite scan + AI-review history</td>
+<td>Survives restart</td>
+</tr>
+<tr>
+<td>Claude handoff ZIP export and strict JSON import</td>
+<td>No API key; manual, human-mediated</td>
+</tr>
+<tr>
+<td>Swagger API docs</td>
+<td><code>http://127.0.0.1:8000/docs</code></td>
+</tr>
+<tr>
+<td>24 backend tests</td>
+<td>Passed at packaging time</td>
+</tr>
+<tr>
+<td><strong>Frontend production build</strong></td>
+<td><strong>Was broken</strong> (TypeScript error TS2550) — see section 2</td>
+</tr>
+</tbody>
+</table>
+<h3>Overview — scan, risk score, findings</h3>
+<p><img alt="Overview" src="img/01-overview.png" /></p>
+<h3>Code changes — real Git diff viewer</h3>
+<p><img alt="Code changes" src="img/02-changes.png" /></p>
+<h3>Risk findings</h3>
+<p><img alt="Risk findings" src="img/03-findings.png" /></p>
+<h3>Test intelligence — suggested tests (nothing is executed)</h3>
+<p><img alt="Test intelligence" src="img/04-tests.png" /></p>
+<h3>Claude Review — manual handoff (export ZIP → review in Claude Code → import JSON)</h3>
+<p><img alt="Claude Review" src="img/05-ai.png" /></p>
+<h3>Scan history</h3>
+<p><img alt="Scan history" src="img/06-history.png" /></p>
+<h3>Configuration</h3>
+<p><img alt="Configuration" src="img/07-settings.png" /></p>
+<h3>API docs (Swagger)</h3>
+<p><img alt="Swagger" src="img/08-swagger.png" /></p>
+<blockquote>
+<p>The UI looks the same before and after Phase 1 — Phase 1 deliberately did not redesign it. The screenshots above are of the current branch, which preserves every baseline screen.</p>
+</blockquote>
+<hr />
+<h2>2. Added in Phase 1 — foundation (commits <code>9726a61</code>, <code>f8967bc</code>)</h2>
+<p>Phase 1 was an audit-and-stabilize phase. Most of it is <strong>backend and documentation, so it has no new screens</strong>.</p>
+<h3>Bugs found by execution and fixed (10)</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Problem on baseline</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Frontend <code>npm run build</code> failed (TS2550 <code>replaceAll</code>)</td>
+<td>Replaced with regex <code>replace</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>A scanned repo's Git config could run a command (<code>textconv</code>) during a scan</td>
+<td><code>--no-textconv</code> on all diffs</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Non-UTF-8 Windows locale crashed scans (cp1252 decode)</td>
+<td>Decode as UTF-8 with replacement</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Non-ASCII file names produced empty diffs</td>
+<td>NUL-separated (<code>-z</code>) Git output</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Pathological Python source caused HTTP 500 (<code>RecursionError</code>)</td>
+<td>Guarded parser</td>
+</tr>
+<tr>
+<td>6</td>
+<td>NUL byte in <code>repository_path</code> caused HTTP 500</td>
+<td>Clean 400 error</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Setting <code>SHIPSAFE_ALLOWED_ROOT</code> locked out the demo (403)</td>
+<td>Demo dir always allowed</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Deeply nested review JSON caused HTTP 500</td>
+<td>Mapped to 422</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Unclear "unknown ref" Git message</td>
+<td>Readable error message</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Interrupted first start left a half-built demo repo forever</td>
+<td>Seeder now repairs missing branches</td>
+</tr>
+</tbody>
+</table>
+<h3>New capabilities</h3>
+<table>
+<thead>
+<tr>
+<th>Addition</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Provider interfaces</strong> (repository, pull request, change, orchestration) + <code>LocalGitProvider</code>; <code>scan_changes()</code> seam so Bitbucket can plug in</td>
+<td><code>backend/app/providers/</code></td>
+</tr>
+<tr>
+<td><strong>Settings loader</strong> + <code>.env.example</code> (<code>SHIPSAFE_*</code>, loopback-only)</td>
+<td><code>backend/app/config.py</code>, <code>docs/CONFIGURATION.md</code></td>
+</tr>
+<tr>
+<td><strong>Forward-only SQLite migration runner</strong> (adopts existing DBs, rolls back on failure, fails closed)</td>
+<td><code>backend/app/db.py</code>, <code>docs/MIGRATIONS.md</code></td>
+</tr>
+<tr>
+<td><strong>Structured error mapping</strong> (403/400/422 instead of 500s)</td>
+<td><code>backend/app/errors.py</code></td>
+</tr>
+<tr>
+<td><strong>Dashboard shows readable API errors</strong> (no more <code>[object Object]</code>)</td>
+<td><code>frontend/src/App.tsx</code></td>
+</tr>
+<tr>
+<td><strong><code>.env</code> loading in <code>scripts/dev.py</code></strong>, <code>.env</code> git-ignored</td>
+<td><code>scripts/dev.py</code>, <code>.gitignore</code></td>
+</tr>
+<tr>
+<td><strong>Rewritten architecture + implementation-status docs</strong>, Phase 1 handoff</td>
+<td><code>docs/</code></td>
+</tr>
+<tr>
+<td><strong>Tests: 24 → 71 passing</strong> (42 new regression/foundation tests + original)</td>
+<td><code>backend/tests/</code></td>
+</tr>
+</tbody>
+</table>
+<h3>Evidence (executed 2026-11-12)</h3>
+<pre><code>cd backend &amp;&amp; ../.venv/Scripts/python -m pytest -q
+71 passed, 1 warning in 151.07s
+</code></pre>
+<p>The frontend dev server and API both started and every dashboard page rendered (screenshots above). <code>npm run build</code> was verified in the Phase 1 session; not re-run for this report.</p>
+<h3>Honest limits</h3>
+<ul>
+<li>Phase 1 is <strong>unreviewed and unmerged</strong>; the acceptance matrix still shows NOT TESTED for Phase 1 gates until the integrator signs off.</li>
+<li>No human UI click-through and no frontend test suite exist yet.</li>
+</ul>
+<hr />
+<h2>3. Still not added</h2>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Status</th>
+<th>Planned phase</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dashboard UI to scan a non-demo repository</td>
+<td>NOT IMPLEMENTED (API only)</td>
+<td>Phase 2</td>
+</tr>
+<tr>
+<td>Pull-request discovery</td>
+<td>NOT IMPLEMENTED (interface only)</td>
+<td>Phase 2</td>
+</tr>
+<tr>
+<td>Bitbucket Cloud repo + PR integration</td>
+<td>NOT IMPLEMENTED</td>
+<td>Phase 2</td>
+</tr>
+<tr>
+<td>Commit-bound PR scans + stale-review detection</td>
+<td>NOT IMPLEMENTED</td>
+<td>Phase 2 / 3</td>
+</tr>
+<tr>
+<td>Per-PR Claude handoff, stale-AI-review warning</td>
+<td>NOT IMPLEMENTED</td>
+<td>Phase 3</td>
+</tr>
+<tr>
+<td>Secure isolated regression test runner</td>
+<td>NOT IMPLEMENTED (no repo code is ever executed)</td>
+<td>Phase 4</td>
+</tr>
+<tr>
+<td>Test patch approval + execution, baseline/head comparison</td>
+<td>NOT IMPLEMENTED</td>
+<td>Phase 4</td>
+</tr>
+<tr>
+<td>Evidence-based release assessment export</td>
+<td>NOT IMPLEMENTED</td>
+<td>Phase 5</td>
+</tr>
+<tr>
+<td>Authentication / roles / multi-user</td>
+<td>NOT IMPLEMENTED</td>
+<td>Phase 5 assessment</td>
+</tr>
+<tr>
+<td>Webhooks / CI gating</td>
+<td>NOT IMPLEMENTED</td>
+<td>Not scheduled</td>
+</tr>
+<tr>
+<td>Automatic Claude/model invocation</td>
+<td>NOT IMPLEMENTED — <strong>by design</strong></td>
+<td>Not planned</td>
+</tr>
+<tr>
+<td>Truncation warning for large diffs (140 lines/file, 300 files)</td>
+<td>PARTIAL</td>
+<td>Phase 2 or 5</td>
+</tr>
+<tr>
+<td>Rules beyond Python / 3 heuristics</td>
+<td>PARTIAL</td>
+<td>Phase 5</td>
+</tr>
+</tbody>
+</table>
+<h2>Summary</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Before Phase 1</th>
+<th>After Phase 1</th>
+<th>Next</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Local scanning + dashboard</td>
+<td>Yes</td>
+<td>Yes (hardened)</td>
+<td>Scan arbitrary repos in UI</td>
+</tr>
+<tr>
+<td>Frontend build</td>
+<td>Broken</td>
+<td>Fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Backend tests</td>
+<td>24</td>
+<td>71</td>
+<td>Frontend tests</td>
+</tr>
+<tr>
+<td>Bitbucket / PRs</td>
+<td>No</td>
+<td>Interfaces only</td>
+<td><strong>Phase 2</strong></td>
+</tr>
+<tr>
+<td>AI review</td>
+<td>Manual import</td>
+<td>Same</td>
+<td>Phase 3</td>
+</tr>
+<tr>
+<td>Run tests safely</td>
+<td>No</td>
+<td>No</td>
+<td>Phase 4</td>
+</tr>
+</tbody>
+</table>

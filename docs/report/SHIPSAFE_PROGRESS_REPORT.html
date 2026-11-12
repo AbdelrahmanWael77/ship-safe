@@ -1,5 +1,5 @@
 <!doctype html><meta charset=utf-8><title>ShipSafe Progress Report</title><style>body{font:16px/1.6 system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;color:#1a1a1a}img{max-width:100%;border:1px solid #ddd;border-radius:8px}table{border-collapse:collapse;width:100%;margin:1rem 0}td,th{border:1px solid #ccc;padding:6px 10px;text-align:left;vertical-align:top}th{background:#f2f4f7}code,pre{background:#f4f4f4;border-radius:4px;padding:2px 4px}pre{padding:10px;overflow:auto}blockquote{border-left:4px solid #3bb;margin:0;padding:0 1rem;color:#555}</style><h1>ShipSafe — Progress Report: Before Phase 1, Added in Phase 1, Still Missing</h1>
-<p><em>Generated 2026-11-12 from branch <code>feat/p1-foundation</code> (unreviewed, unmerged). Screenshots were captured from the running app on this machine with the synthetic LedgerLite demo repository. Statuses come from <code>docs/IMPLEMENTATION_STATUS.md</code> and an executed test run (<code>71 passed in 151s</code>).</em></p>
+<p><em>Generated 2026-11-12 from branch <code>feat/p1-foundation</code>, updated the same day after the independent-review remediation (commits <code>d9e7f19</code>, <code>18b1fe8</code>; unmerged). Screenshots were captured from the running app on this machine with the synthetic LedgerLite demo repository. Statuses come from <code>docs/IMPLEMENTATION_STATUS.md</code> and executed test runs (<code>101 passed</code> on Windows/Python 3.12 and in a Linux/Python 3.11 container).</em></p>
 <hr />
 <h2>1. Before Phase 1 — baseline v0.2 (what already existed)</h2>
 <p>A local-first dashboard: React/TypeScript/Vite frontend, FastAPI backend, real Git diff scanning, Python AST risk heuristics, SQLite scan history, and a manual Claude Code review handoff.</p>
@@ -177,10 +177,66 @@
 71 passed, 1 warning in 151.07s
 </code></pre>
 <p>The frontend dev server and API both started and every dashboard page rendered (screenshots above). <code>npm run build</code> was verified in the Phase 1 session; not re-run for this report.</p>
-<h3>Honest limits</h3>
+<h3>Honest limits (original session)</h3>
 <ul>
-<li>Phase 1 is <strong>unreviewed and unmerged</strong>; the acceptance matrix still shows NOT TESTED for Phase 1 gates until the integrator signs off.</li>
 <li>No human UI click-through and no frontend test suite exist yet.</li>
+</ul>
+<hr />
+<h2>2b. Added by the remediation (commits <code>d9e7f19</code>, <code>18b1fe8</code>, 2026-11-12)</h2>
+<p>An independent investigation of the Phase 1 handoff (real reproductions, not documentation) found six issues; all were fixed the same day with regression tests. No screenshots: these are backend and contract changes, and the demo branches never hit the limits that would show the new UI badge.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Problem found</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A1</td>
+<td>Any website could reach the local API through DNS rebinding (no <code>Host</code> check; CORS cannot stop it)</td>
+<td>API answers only to <code>127.0.0.1</code> / <code>localhost</code> / <code>[::1]</code> Host names, 400 otherwise</td>
+</tr>
+<tr>
+<td>B1</td>
+<td>File names like <code>*</code>, <code>[a].py</code>, <code>:!a.py</code> were read by Git as patterns, so a file's "diff" could contain other files</td>
+<td>Every Git call runs with <code>--literal-pathspecs</code> and <code>./</code>-prefixed paths</td>
+</tr>
+<tr>
+<td>B2</td>
+<td>A one-line <code>.git</code> file could redirect a scan to any repository outside the allowlist</td>
+<td>The directory Git actually reads from must also be inside the allowlist</td>
+</tr>
+<tr>
+<td>B3</td>
+<td>Reports cut at 300 files / 140 diff lines without saying so</td>
+<td>New <code>truncated</code> / <code>files_omitted</code> / <code>diff_truncated</code> fields, a marker line, a UI badge and notice, ZIP limitations</td>
+</tr>
+<tr>
+<td>B4</td>
+<td>Demo repair could discard uncommitted edits and commit stray files; a look-alike repo could be adopted</td>
+<td>Repair refuses when your edits are present, adds only demo files, marks its own repo</td>
+</tr>
+<tr>
+<td>B5</td>
+<td><code>SHIPSAFE_DEMO_DIR</code> could be set to a whole drive</td>
+<td>Same drive-root check as <code>SHIPSAFE_ALLOWED_ROOT</code></td>
+</tr>
+</tbody>
+</table>
+<p>Also verified without needing a change: no command defined inside a scanned repository (hooks, filters, diff drivers, aliases, fsmonitor) runs during a scan; path tricks (UNC, <code>\\?\</code>, short names, junctions) are all denied; migrations are idempotent and roll back safely.</p>
+<h3>Evidence (executed 2026-11-12)</h3>
+<pre><code>Windows 11 / Python 3.12.4:   101 passed
+Linux x86_64 / Python 3.11.18 (Docker python:3.11-slim):   101 passed
+npm run build (Windows and Linux node:24):   ✓ built
+16 of the 30 new tests fail on the pre-fix commit f8967bc
+All six demo branches scanned through the dashboard, export JSON and handoff ZIP checked per scan:   33/33
+</code></pre>
+<h3>Still honest limits</h3>
+<ul>
+<li>Not merged yet; no second-person review (single-owner Phase 1 by decision).</li>
+<li>No human visual pass over the dashboard; no real Claude Code export → review → import; no macOS run.</li>
 </ul>
 <hr />
 <h2>3. Still not added</h2>
@@ -249,7 +305,7 @@
 <td>Not planned</td>
 </tr>
 <tr>
-<td>Truncation warning for large diffs (140 lines/file, 300 files)</td>
+<td>Raising or configuring the 140-line / 300-file limits (they are now reported, not silent)</td>
 <td>PARTIAL</td>
 <td>Phase 2 or 5</td>
 </tr>
@@ -257,6 +313,11 @@
 <td>Rules beyond Python / 3 heuristics</td>
 <td>PARTIAL</td>
 <td>Phase 5</td>
+</tr>
+<tr>
+<td>Vite toolchain upgrade (advisories are dev-server-only, unreachable here)</td>
+<td>DEFERRED</td>
+<td>Phase 2</td>
 </tr>
 </tbody>
 </table>
@@ -266,7 +327,7 @@
 <tr>
 <th></th>
 <th>Before Phase 1</th>
-<th>After Phase 1</th>
+<th>After Phase 1 + remediation</th>
 <th>Next</th>
 </tr>
 </thead>
@@ -274,19 +335,19 @@
 <tr>
 <td>Local scanning + dashboard</td>
 <td>Yes</td>
-<td>Yes (hardened)</td>
+<td>Yes (hardened: Host check, literal paths, allowlist, truncation flags)</td>
 <td>Scan arbitrary repos in UI</td>
 </tr>
 <tr>
 <td>Frontend build</td>
 <td>Broken</td>
-<td>Fixed</td>
+<td>Fixed (Windows + Linux)</td>
 <td>—</td>
 </tr>
 <tr>
 <td>Backend tests</td>
 <td>24</td>
-<td>71</td>
+<td>101 (Windows 3.12 + Linux 3.11)</td>
 <td>Frontend tests</td>
 </tr>
 <tr>
@@ -298,7 +359,7 @@
 <tr>
 <td>AI review</td>
 <td>Manual import</td>
-<td>Same</td>
+<td>Same, ZIP states its gaps</td>
 <td>Phase 3</td>
 </tr>
 <tr>

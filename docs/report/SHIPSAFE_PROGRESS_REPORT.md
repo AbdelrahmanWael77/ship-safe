@@ -1,6 +1,6 @@
 # ShipSafe — Progress Report: Before Phase 1, Added in Phase 1, Still Missing
 
-*Generated 2026-11-12 from branch `feat/p1-foundation` (unreviewed, unmerged). Screenshots were captured from the running app on this machine with the synthetic LedgerLite demo repository. Statuses come from `docs/IMPLEMENTATION_STATUS.md` and an executed test run (`71 passed in 151s`).*
+*Generated 2026-11-12 from branch `feat/p1-foundation`, updated the same day after the independent-review remediation (commits `d9e7f19`, `18b1fe8`; unmerged). Screenshots were captured from the running app on this machine with the synthetic LedgerLite demo repository. Statuses come from `docs/IMPLEMENTATION_STATUS.md` and executed test runs (`101 passed` on Windows/Python 3.12 and in a Linux/Python 3.11 container).*
 
 ---
 
@@ -86,9 +86,38 @@ cd backend && ../.venv/Scripts/python -m pytest -q
 ```
 The frontend dev server and API both started and every dashboard page rendered (screenshots above). `npm run build` was verified in the Phase 1 session; not re-run for this report.
 
-### Honest limits
-- Phase 1 is **unreviewed and unmerged**; the acceptance matrix still shows NOT TESTED for Phase 1 gates until the integrator signs off.
+### Honest limits (original session)
 - No human UI click-through and no frontend test suite exist yet.
+
+---
+
+## 2b. Added by the remediation (commits `d9e7f19`, `18b1fe8`, 2026-11-12)
+
+An independent investigation of the Phase 1 handoff (real reproductions, not documentation) found six issues; all were fixed the same day with regression tests. No screenshots: these are backend and contract changes, and the demo branches never hit the limits that would show the new UI badge.
+
+| # | Problem found | Fix |
+|---|---|---|
+| A1 | Any website could reach the local API through DNS rebinding (no `Host` check; CORS cannot stop it) | API answers only to `127.0.0.1` / `localhost` / `[::1]` Host names, 400 otherwise |
+| B1 | File names like `*`, `[a].py`, `:!a.py` were read by Git as patterns, so a file's "diff" could contain other files | Every Git call runs with `--literal-pathspecs` and `./`-prefixed paths |
+| B2 | A one-line `.git` file could redirect a scan to any repository outside the allowlist | The directory Git actually reads from must also be inside the allowlist |
+| B3 | Reports cut at 300 files / 140 diff lines without saying so | New `truncated` / `files_omitted` / `diff_truncated` fields, a marker line, a UI badge and notice, ZIP limitations |
+| B4 | Demo repair could discard uncommitted edits and commit stray files; a look-alike repo could be adopted | Repair refuses when your edits are present, adds only demo files, marks its own repo |
+| B5 | `SHIPSAFE_DEMO_DIR` could be set to a whole drive | Same drive-root check as `SHIPSAFE_ALLOWED_ROOT` |
+
+Also verified without needing a change: no command defined inside a scanned repository (hooks, filters, diff drivers, aliases, fsmonitor) runs during a scan; path tricks (UNC, `\\?\`, short names, junctions) are all denied; migrations are idempotent and roll back safely.
+
+### Evidence (executed 2026-11-12)
+```
+Windows 11 / Python 3.12.4:   101 passed
+Linux x86_64 / Python 3.11.18 (Docker python:3.11-slim):   101 passed
+npm run build (Windows and Linux node:24):   ✓ built
+16 of the 30 new tests fail on the pre-fix commit f8967bc
+All six demo branches scanned through the dashboard, export JSON and handoff ZIP checked per scan:   33/33
+```
+
+### Still honest limits
+- Not merged yet; no second-person review (single-owner Phase 1 by decision).
+- No human visual pass over the dashboard; no real Claude Code export → review → import; no macOS run.
 
 ---
 
@@ -107,16 +136,17 @@ The frontend dev server and API both started and every dashboard page rendered (
 | Authentication / roles / multi-user | NOT IMPLEMENTED | Phase 5 assessment |
 | Webhooks / CI gating | NOT IMPLEMENTED | Not scheduled |
 | Automatic Claude/model invocation | NOT IMPLEMENTED — **by design** | Not planned |
-| Truncation warning for large diffs (140 lines/file, 300 files) | PARTIAL | Phase 2 or 5 |
+| Raising or configuring the 140-line / 300-file limits (they are now reported, not silent) | PARTIAL | Phase 2 or 5 |
 | Rules beyond Python / 3 heuristics | PARTIAL | Phase 5 |
+| Vite toolchain upgrade (advisories are dev-server-only, unreachable here) | DEFERRED | Phase 2 |
 
 ## Summary
 
-| | Before Phase 1 | After Phase 1 | Next |
+| | Before Phase 1 | After Phase 1 + remediation | Next |
 |---|---|---|---|
-| Local scanning + dashboard | Yes | Yes (hardened) | Scan arbitrary repos in UI |
-| Frontend build | Broken | Fixed | — |
-| Backend tests | 24 | 71 | Frontend tests |
+| Local scanning + dashboard | Yes | Yes (hardened: Host check, literal paths, allowlist, truncation flags) | Scan arbitrary repos in UI |
+| Frontend build | Broken | Fixed (Windows + Linux) | — |
+| Backend tests | 24 | 101 (Windows 3.12 + Linux 3.11) | Frontend tests |
 | Bitbucket / PRs | No | Interfaces only | **Phase 2** |
-| AI review | Manual import | Same | Phase 3 |
+| AI review | Manual import | Same, ZIP states its gaps | Phase 3 |
 | Run tests safely | No | No | Phase 4 |

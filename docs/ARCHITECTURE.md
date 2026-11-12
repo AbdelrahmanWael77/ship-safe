@@ -150,7 +150,7 @@ ChangeProvider       resolve_commit(repository, ref) -> full SHA
 Scan orchestration   scanner.scan_changes(provider: ChangeProvider, repository, base, head) -> Report
 ```
 
-`LocalGitProvider` implements `RepositoryProvider` and `ChangeProvider`. Nothing implements `PullRequestProvider`. `test_scan_orchestration_works_with_a_non_git_provider` runs the orchestration against an in-memory provider to show the seam does not depend on Git or the filesystem. Field-level documentation is in the dataclass docstrings.
+`LocalGitProvider` implements `RepositoryProvider` and `ChangeProvider`. Since 2026-11-12 (Phase 2, unmerged) `providers/bitbucket.py` holds `BitbucketCloudProvider`, which implements all three protocols and is tested against mocked HTTP only; the application does not construct it yet. `test_scan_orchestration_works_with_a_non_git_provider` runs the orchestration against an in-memory provider to show the seam does not depend on Git or the filesystem. Field-level documentation is in the dataclass docstrings.
 
 ## Security boundaries
 

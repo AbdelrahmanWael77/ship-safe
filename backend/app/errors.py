@@ -31,5 +31,13 @@ class RefNotFound(ProviderError):
     """A branch, tag, or commit could not be resolved to a commit."""
 
 
+class ProviderAuthError(ProviderError):
+    """A remote provider rejected the configured credentials or their scope."""
+
+
+class ProviderUnavailable(ProviderError):
+    """A remote provider timed out, was unreachable, or kept rate-limiting us."""
+
+
 class ConfigError(RuntimeError):
     """Startup configuration is unsafe or unusable. The application must not start."""

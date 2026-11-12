@@ -3,9 +3,10 @@ from .base import (
     MAX_CHANGED_FILES, ChangeProvider, ChangeSet, FileDelta, PullRequestProvider,
     PullRequestRef, RepositoryProvider, RepositoryRef, valid_ref,
 )
+from .bitbucket import BitbucketCloudProvider
 from .local_git import LocalGitProvider
 
 __all__ = [
-    "MAX_CHANGED_FILES", "ChangeProvider", "ChangeSet", "FileDelta", "LocalGitProvider",
+    "MAX_CHANGED_FILES", "BitbucketCloudProvider", "ChangeProvider", "ChangeSet", "FileDelta", "LocalGitProvider",
     "PullRequestProvider", "PullRequestRef", "RepositoryProvider", "RepositoryRef", "valid_ref",
 ]

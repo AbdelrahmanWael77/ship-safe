@@ -69,3 +69,11 @@ Decision owner: Nour Waled (confirm or object before merge)
 7. The demo seeder may rewrite branches inside the demo directory only when they are missing or carry no commit, and never touches a repository it did not generate.
 8. `frontend/package-lock.json` is committed for reproducible builds.
 9. Vite 5.4.21 is accepted for Phase 1 (see `docs/ARCHITECTURE.md`, known brittle areas); the toolchain upgrade is Phase 2 work.
+
+## 2026-11-12 — Phase 2 starts on a branch stacked on unmerged Phase 1; Bitbucket Cloud
+Decision owner: Nour Waled (confirm or object before merge)
+Problem / tradeoff: The Phase 2 prompt expects Phase 1 to be reviewed and merged first. No reviewer is assigned, and the owner asked to continue with the next unfinished task.
+Decision: Phase 2 work goes on `feat/p2-bitbucket-provider`, branched from `feat/p1-foundation`. `main` is untouched; Phase 1 still needs its human review and merge. The provider targets Bitbucket **Cloud** (the prompt's default); Data Center would be a separate provider. Agents follow `AGENTS.md` and hand off through `docs/IMPLEMENTATION_STATUS.md` and `NEXT_AGENT_PROMPT.md`.
+Alternatives considered: Wait for the Phase 1 merge (stalls); commit Phase 2 onto the Phase 1 branch (mixes reviews).
+Security / product impact: A Phase 1 review finding may require rebasing Phase 2. No live Bitbucket access has been configured or used.
+Related ticket / commit: `feat/p2-bitbucket-provider` (uncommitted at the time of writing)

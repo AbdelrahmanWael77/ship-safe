@@ -1,9 +1,9 @@
 """Provider-neutral contracts for source-control access.
 
-These are the seams Phase 2 plugs a Bitbucket connector into. Phase 1 ships
-exactly one implementation, :class:`app.providers.local_git.LocalGitProvider`,
-which covers repository discovery and change retrieval. Nothing in ShipSafe
-implements :class:`PullRequestProvider` yet.
+Two implementations exist. :class:`app.providers.local_git.LocalGitProvider`
+covers repository discovery and change retrieval for local clones.
+:class:`app.providers.bitbucket.BitbucketCloudProvider` covers all three
+protocols for Bitbucket Cloud, including :class:`PullRequestProvider`.
 
 Design rules for every implementation:
 

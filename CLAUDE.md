@@ -2,6 +2,11 @@
 
 This file is version-controlled team context. Claude Code reads root `CLAUDE.md` when a session starts. **Work only on the phase and task assigned in the active prompt.**
 
+## Agent entry point — read first
+- Follow `AGENTS.md` for the permanent build and handoff rules shared by every coding agent.
+- Before coding: read the checkpoint at the top of `docs/IMPLEMENTATION_STATUS.md`; if taking over from another agent, also read `NEXT_AGENT_PROMPT.md`. Consult only the active phase prompt and the relevant code. The v0.2 baseline and Phase 1 are complete; continue from the next unfinished task.
+- After each atomic task: update the checkpoint, any gate supported by executed evidence, and `NEXT_AGENT_PROMPT.md`. Keep the user-facing summary brief.
+
 ## Project and reality check
 - ShipSafe is a local-first React/TypeScript + Vite dashboard with a FastAPI/Python backend, real Git scanning, Python AST risk heuristics, SQLite scans, and manual Claude Code JSON-review handoff.
 - The codebase starts at v0.2. Bitbucket integration, isolated regression execution, team authentication, and CI webhooks are **not implemented** in the baseline.

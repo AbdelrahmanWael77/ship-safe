@@ -75,14 +75,29 @@ def response_keys(source: str) -> set[str]:
 
 def import_dependencies(
     provider: ChangeProvider, repository: RepositoryRef, head_sha: str, changed_paths: list[str],
-) -> list[dict]:
+    *, max_reads: int | None = None,
+) -> tuple[list[dict], int]:
+    """Unchanged Python files that directly import a changed module.
+
+    Returns ``(importers, skipped)``. With ``max_reads`` (used for remote
+    providers, where every file is one HTTP request) at most that many files
+    are read and ``skipped`` counts the candidates left unread. Without it the
+    behaviour is the long-standing local one: the first
+    ``MAX_IMPORT_SCAN_FILES`` tree entries, with ``skipped`` reported as 0.
+    """
     files = provider.list_files(repository, head_sha)
+    skipped = 0
+    if max_reads is not None:
+        candidates = [path for path in files if path.endswith(".py") and path not in changed_paths]
+        files, skipped = candidates[:max_reads], max(0, len(candidates) - max_reads)
+    else:
+        files = files[:MAX_IMPORT_SCAN_FILES]
     changed_modules = {
         path[:-3].replace("/", "."): path
         for path in changed_paths if path.endswith(".py")
     }
     direct = []
-    for path in files[:MAX_IMPORT_SCAN_FILES]:
+    for path in files:
         if not path.endswith(".py") or path in changed_paths:
             continue
         tree = _parse(provider.read_file(repository, head_sha, path))
@@ -99,7 +114,7 @@ def import_dependencies(
         matched = sorted(mod for mod in changed_modules if mod in imports)
         if matched:
             direct.append({"path": path, "imports_changed": matched})
-    return direct
+    return direct, skipped
 
 
 def _changed_new_lines(diff: str) -> set[int]:
@@ -192,12 +207,19 @@ def scan_changes(provider: ChangeProvider, repository: RepositoryRef, base: str,
     return scan_change_set(provider, repository, base, head)[0]
 
 
-def scan_change_set(provider: ChangeProvider, repository: RepositoryRef, base: str, head: str) -> tuple[dict, ChangeSet]:
+def scan_change_set(
+    provider: ChangeProvider, repository: RepositoryRef, base: str, head: str, *, max_import_reads: int | None = None,
+) -> tuple[dict, ChangeSet]:
     """Scan orchestration: fetch a change set from any provider, run the static
     heuristics, and build the report. Reads only; executes nothing.
 
     Returns ``(report, changes)``. ``changes`` carries the full commit SHAs
     the scan was bound to; the report keeps its 12-character form.
+
+    ``max_import_reads`` bounds the import analysis (see
+    ``import_dependencies``). Only when that bound cuts the analysis short
+    does the summary gain ``import_analysis_truncated`` and
+    ``import_files_skipped``; every other report keeps its exact shape.
 
     The returned dict is the persisted report and the public ``Report`` API
     type. Its v0.2 shape is preserved; Phase 1 added only the completeness
@@ -230,7 +252,9 @@ def scan_change_set(provider: ChangeProvider, repository: RepositoryRef, base: s
         level = "No flagged patterns — review still required"
     else:
         level = "No changes detected"
-    impacted = import_dependencies(provider, repository, head_sha, [f["path"] for f in files])
+    impacted, import_files_skipped = import_dependencies(
+        provider, repository, head_sha, [f["path"] for f in files], max_reads=max_import_reads,
+    )
     test_suggestions = []
     suggestions = {
         "Security": "Verify a different user cannot access another user's invoice.",
@@ -262,4 +286,9 @@ def scan_change_set(provider: ChangeProvider, repository: RepositoryRef, base: s
         "test_suggestions": test_suggestions,
         "disclaimer": "Heuristic static analysis only. Findings are suspected risks, not confirmed failures. No repository code or tests were executed.",
     }
+    if import_files_skipped:
+        # affected_modules is incomplete: say so in the report itself, so the
+        # dashboard, the export and the Claude handoff all carry it.
+        report["summary"]["import_analysis_truncated"] = True
+        report["summary"]["import_files_skipped"] = import_files_skipped
     return report, changes

@@ -1,9 +1,12 @@
 """Error types shared by the scanner, providers, and API layer.
 
-The API maps these to HTTP statuses in one place (``main.create_scan``):
+The API maps these to HTTP statuses in ``main``. Local scans
+(``create_scan``):
 
 * ``RepositoryAccessDenied`` -> 403
 * every other ``ScanError``  -> 400
+
+Bitbucket routes use the finer table in ``main.bitbucket_failure``.
 
 Messages are returned to the client, so they must never contain credentials
 or other secrets.
@@ -29,6 +32,14 @@ class RepositoryNotFound(ProviderError):
 
 class RefNotFound(ProviderError):
     """A branch, tag, or commit could not be resolved to a commit."""
+
+
+class PullRequestNotFound(ProviderError):
+    """The pull request id does not exist in that repository."""
+
+
+class ChangeTooLarge(ProviderError):
+    """The provider could not produce the comparison because it is too large."""
 
 
 class ProviderAuthError(ProviderError):

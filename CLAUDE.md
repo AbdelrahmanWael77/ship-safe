@@ -16,7 +16,7 @@ This file is version-controlled team context. Claude Code reads root `CLAUDE.md`
 ## Team coordination — mandatory
 1. Identify the active phase, ticket, assigned owner, branch, and file ownership in your first response.
 2. Before editing, inspect the working tree (`git status` if available) and find conflicting work. If the same files are being changed by someone else, **stop and coordinate** rather than overwriting.
-3. Make changes only on your assigned feature branch or isolated Git worktree. Never edit shared `main` directly, push, merge, rebase other people's work, or delete branches without explicit approval.
+3. Make changes only on your assigned feature branch or isolated Git worktree. Never edit the shared default branch (`feat/p1-foundation`; this repository has no `main`) directly, push, merge, rebase other people's work, or delete branches without explicit approval.
 4. Scope changes to the ticket and active phase. Prefer the smallest complete vertical slice. Do not implement future phases opportunistically.
 5. Maintain API contracts and migrations. Discuss cross-boundary changes with frontend/backend owners before editing shared types or endpoints.
 6. At completion, update your ticket handoff, evidence, and changed-file summary; the phase integrator updates the canonical `docs/PHASE_HANDOFF.md` and acceptance matrix **after merging**.

@@ -12,9 +12,9 @@ Allowed status values: `PASS`, `FAIL`, `BLOCKED`, `NOT TESTED`. Only the integra
 | 1 | Security remediation (Host header, literal pathspecs, `.git` redirect, seeder, demo-dir root, truncation reporting) | PASS | `tests/test_phase1_remediation.py` 30 passed; 16 of them fail on pre-fix `f8967bc` (worktree run 2026-11-12); live Host check through the Vite proxy 200 / spoofed Host 400 | Nour Waled |
 | 1 | Python 3.11 and Linux | PASS | Docker `python:3.11-slim` (Python 3.11.18, Git 2.47.3, Linux x86_64): `python -m pytest -q` → 101 passed in 19 s; `node:24-slim`: `npm ci && npm run build` → ✓ built, identical bundle hash (2026-11-12). macOS NOT TESTED | Nour Waled |
 | 1 | Human visual review of the dashboard; real Claude Code export→review→import | NOT TESTED | Only scripted headless-Chrome runs and hand-written review JSON so far | TBD |
-| 2 | Bitbucket repository + PR list (mock) | NOT TESTED | | |
+| 2 | Bitbucket repository + PR list (mock) | PASS — backend API only | `tests/test_bitbucket_provider.py` 38 passed, `tests/test_bitbucket_api.py` 41 passed; full suite `cd backend && python -m pytest -q` → 229 passed (2026-11-12, Linux container, Python 3.13.18, `feat/p2-bitbucket-api`). **Not covered:** dashboard screens (task 5), Windows re-run, live Bitbucket. The integrator may prefer NOT TESTED until the UI exists | TBD |
 | 2 | Read-only live Bitbucket (approved credentials) | NOT TESTED | | |
-| 2 | Immutable commit-bound PR scan + stale detection | NOT TESTED | | |
+| 2 | Immutable commit-bound PR scan + stale detection | PASS — backend API only | `tests/test_bitbucket_api.py`: scan bound to merge base and head full SHAs, stale on head change, cleared on return, `head_changed` guard, `stale_checked` on every response; `tests/test_migration_2.py` 17 passed (same run). **Not covered:** stale badge in the UI (task 5), live Bitbucket. Stale state on the pull request list is checked for at most 20 scanned pull requests per request (documented) | TBD |
 | 3 | Scan/PR handoff package + strict JSON import | NOT TESTED | | |
 | 3 | Correct commit binding; stale AI review warning | NOT TESTED | | |
 | 4 | Explicit approval + isolated pytest execution | NOT TESTED | | |

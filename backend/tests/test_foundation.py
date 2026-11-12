@@ -221,7 +221,10 @@ def test_existing_v0_2_database_is_adopted_without_touching_history(tmp_path, de
     assert db.schema_version(db_file) == 0
 
     with TestClient(create_app(demo_root=demo, db_file=db_file), base_url="http://127.0.0.1") as client:
-        assert client.get(f"/api/scans/{report['id']}").json() == report
+        served = client.get(f"/api/scans/{report['id']}").json()
+        # Since Phase 2 task 4 the API adds "binding" beside the stored report.
+        assert served.pop("binding")["provider"] == "local-git"
+        assert served == report
         assert client.get(f"/api/scans/{report['id']}/ai/handoff").status_code == 200
 
     assert db.schema_version(db_file) == db.LATEST_VERSION

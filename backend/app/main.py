@@ -1,8 +1,11 @@
-"""ShipSafe API: local Git scanning, heuristic risk findings, persisted scan history."""
+"""ShipSafe API: local Git scanning, read-only Bitbucket pull request scanning,
+heuristic risk findings, persisted scan history."""
 from __future__ import annotations
 
 import json
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -13,9 +16,12 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .ai_handoff import AIReviewImport, MAX_IMPORT_BYTES, context_digest, handoff_zip, saved_review, validate_review_binding
 from .config import load_settings
-from .db import insert_scan, migrate, session
+from .db import BINDING_COLUMNS, binding, insert_scan, migrate, pull_request_scans, scanned_pull_requests, session, sync_stale
 from .demo_seed import DEMO_BRANCHES, ensure_demo_repo
-from .errors import RepositoryAccessDenied, ScanError
+from .errors import (
+    ChangeTooLarge, ProviderAuthError, ProviderError, ProviderUnavailable, PullRequestNotFound, RefNotFound,
+    RepositoryAccessDenied, RepositoryNotFound, ScanError,
+)
 from .providers import BitbucketCloudProvider, LocalGitProvider
 from .scanner import git, scan_change_set
 
@@ -23,6 +29,59 @@ from .scanner import git, scan_change_set
 #: Host header values the development API answers to. Port suffixes are
 #: ignored by the middleware, so "127.0.0.1:8000" matches "127.0.0.1".
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+
+
+#: Import analysis over Bitbucket costs one request per file, so it is bounded.
+#: A report cut by this bound says so in its summary.
+BITBUCKET_IMPORT_READS = 200
+#: Listing pull requests refreshes the stale marker of those that already
+#: have scans; each refresh is one or more Bitbucket requests, so it is bounded.
+STALE_CHECKS_PER_LIST = 20
+
+
+class BitbucketFailure(Exception):
+    """A Bitbucket route could not answer. Rendered as ``{"detail", "code"}``."""
+
+    def __init__(self, status: int, code: str, message: str):
+        super().__init__(message)
+        self.status, self.code, self.message = status, code, message
+
+
+def bitbucket_failure(exc: ScanError) -> BitbucketFailure:
+    """Map provider errors to HTTP. Most specific first; messages come from
+    the provider and never contain the credential.
+
+    A rejected credential is 502, not 401: the browser user did nothing wrong
+    and cannot fix it; the server's Bitbucket configuration has to change.
+    """
+    table: tuple[tuple[type, int, str], ...] = (
+        (RepositoryAccessDenied, 403, "repository_not_allowed"),
+        (RepositoryNotFound, 404, "repository_not_found"),
+        (PullRequestNotFound, 404, "pull_request_not_found"),
+        (RefNotFound, 404, "commit_not_found"),
+        (ChangeTooLarge, 422, "diff_too_large"),
+        (ProviderAuthError, 502, "bitbucket_auth_failed"),
+        (ProviderUnavailable, 503, "bitbucket_unavailable"),
+        (ProviderError, 502, "bitbucket_error"),
+    )
+    for kind, status, code in table:
+        if isinstance(exc, kind):
+            return BitbucketFailure(status, code, str(exc))
+    return BitbucketFailure(400, "invalid_request", str(exc))
+
+
+@contextmanager
+def bitbucket_errors():
+    try:
+        yield
+    except ScanError as exc:
+        raise bitbucket_failure(exc) from exc
+
+
+class PullRequestScanRequest(BaseModel):
+    #: Optional guard: the full head SHA the caller is looking at. The scan is
+    #: refused with 409 if the pull request has moved on since.
+    head_commit: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
 
 
 class ScanRequest(BaseModel):
@@ -35,7 +94,10 @@ def create_app(
     demo_root: Path | None = None,
     db_file: Path | None = None,
     allowed_root: Path | None = None,
+    bitbucket: BitbucketCloudProvider | None = None,
 ) -> FastAPI:
+    """``bitbucket`` overrides the provider built from settings (tests pass one
+    with a mocked transport)."""
     settings = load_settings(demo_root=demo_root, db_file=db_file, allowed_root=allowed_root)
     demo_root, db_file = settings.demo_dir, settings.db_path
     # Deny by default: only the synthetic repository is scannable unless
@@ -43,11 +105,11 @@ def create_app(
     provider = LocalGitProvider(settings.allowed_roots)
     # Built only when SHIPSAFE_BITBUCKET_* is fully configured; no request is
     # sent here. Invalid slugs raise ConfigError, so the API does not start.
-    # No route uses it yet (Phase 2 task 4).
-    bitbucket = BitbucketCloudProvider(
-        settings.bitbucket.workspace, settings.bitbucket.repositories,
-        token=settings.bitbucket.token.reveal(), email=settings.bitbucket.email,
-    ) if settings.bitbucket else None
+    if bitbucket is None and settings.bitbucket:
+        bitbucket = BitbucketCloudProvider(
+            settings.bitbucket.workspace, settings.bitbucket.repositories,
+            token=settings.bitbucket.token.reveal(), email=settings.bitbucket.email,
+        )
 
     def connection():
         return session(db_file)
@@ -71,6 +133,11 @@ def create_app(
     # CORS. Such requests carry the attacker's Host header, so refuse every
     # Host that is not a loopback name. Added last so it runs before CORS.
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOOPBACK_HOSTS)
+
+    @app.exception_handler(BitbucketFailure)
+    async def bitbucket_failure_response(_request: Request, exc: BitbucketFailure):
+        # "detail" stays a string, like every other handled error of this API.
+        return JSONResponse(status_code=exc.status, content={"detail": exc.message, "code": exc.code})
 
     @app.get("/api/health")
     def health():
@@ -100,35 +167,46 @@ def create_app(
                 conn, report, provider=repository.provider, repository_id=repository.id,
                 base_commit=changes.base_sha, head_commit=changes.head_sha,
             )
-        return report
+        return read_scan(report["id"])
 
     @app.get("/api/scans")
     def list_scans(limit: int = Query(default=12, ge=1, le=100)):
         with connection() as conn:
             rows = conn.execute(
-                "SELECT report_json FROM scans ORDER BY created_at DESC LIMIT ?", (limit,)
+                f"SELECT report_json, {BINDING_COLUMNS} FROM scans ORDER BY created_at DESC LIMIT ?", (limit,)
             ).fetchall()
         return [
-            {key: report[key] for key in (
+            {**{key: report[key] for key in (
                 "id", "created_at", "repo_name", "base_ref", "head_ref", "duration_ms", "summary"
-            )}
+            )}, "binding": binding(row)}
             for row in rows for report in [json.loads(row["report_json"])]
         ]
 
     def read_report(scan_id: str) -> dict:
+        """The report exactly as stored. The Claude handoff and its digest are
+        built from this, so nothing may be added to it here."""
         with connection() as conn:
             row = conn.execute("SELECT report_json FROM scans WHERE id = ?", (scan_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Scan report not found")
         return json.loads(row["report_json"])
 
+    def read_scan(scan_id: str, *, stale_checked: bool = False) -> dict:
+        """The stored report plus ``binding`` (full SHAs, provider, pull
+        request, stale marker) from the columns beside it."""
+        with connection() as conn:
+            row = conn.execute(f"SELECT report_json, {BINDING_COLUMNS} FROM scans WHERE id = ?", (scan_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Scan report not found")
+        return {**json.loads(row["report_json"]), "binding": binding(row, stale_checked=stale_checked)}
+
     @app.get("/api/scans/{scan_id}")
     def get_scan(scan_id: str):
-        return read_report(scan_id)
+        return read_scan(scan_id)
 
     @app.get("/api/scans/{scan_id}/export")
     def export_scan(scan_id: str):
-        report = read_report(scan_id)
+        report = read_scan(scan_id)
         return JSONResponse(
             content=report,
             headers={"Content-Disposition": f'attachment; filename="shipsafe-{scan_id[:8]}.json"'},
@@ -197,6 +275,151 @@ def create_app(
     def latest_ai_review(scan_id: str):
         reviews = list_ai_reviews(scan_id)
         return reviews[0] if reviews else None
+
+    # -- Bitbucket (read-only) ------------------------------------------------
+
+    def require_bitbucket() -> BitbucketCloudProvider:
+        if bitbucket is None:
+            raise BitbucketFailure(
+                503, "bitbucket_not_configured",
+                "Bitbucket is not configured. Set SHIPSAFE_BITBUCKET_WORKSPACE, SHIPSAFE_BITBUCKET_REPOSITORIES "
+                "and SHIPSAFE_BITBUCKET_TOKEN on the server, then restart the API.",
+            )
+        return bitbucket
+
+    def now() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def repository_json(repository) -> dict:
+        return {
+            "id": repository.id, "slug": repository.id.partition("/")[2], "name": repository.name,
+            "url": repository.location, "default_branch": repository.default_branch,
+        }
+
+    def refresh_stale(conn, pull_request) -> bool:
+        """Record what Bitbucket just told us about this pull request's head.
+
+        Returns whether the check happened: it cannot when the head commit is
+        unreadable (fork, deleted branch), and then stored markers are left as
+        they were.
+        """
+        if not pull_request.source_sha:
+            return False
+        sync_stale(
+            conn, provider=pull_request.provider, repository_id=pull_request.repository_id,
+            pull_request_id=pull_request.id, current_head=pull_request.source_sha, observed_at=now(),
+        )
+        return True
+
+    def not_scannable(pull_request) -> tuple[str, str] | None:
+        if not pull_request.source_sha:
+            return ("head_commit_unavailable",
+                    "The pull request's head commit cannot be read through the approved repository "
+                    "(for example a pull request from a fork, or a deleted source branch), so a scan "
+                    "could not be bound to an exact commit.")
+        if not pull_request.target_sha:
+            return ("base_commit_unavailable",
+                    "The pull request's target branch commit cannot be read, so the comparison base is unknown.")
+        return None
+
+    @app.get("/api/bitbucket/status")
+    def bitbucket_status():
+        """Whether Bitbucket is configured. Never includes the credential."""
+        if bitbucket is None:
+            return {"configured": False, "provider": None, "workspace": None, "repositories": []}
+        return {"configured": True, "provider": bitbucket.name, "workspace": bitbucket.workspace,
+                "repositories": list(bitbucket.repositories)}
+
+    @app.get("/api/bitbucket/repositories")
+    def bitbucket_repositories():
+        provider = require_bitbucket()
+        with bitbucket_errors():
+            return [repository_json(repository) for repository in provider.list_repositories()]
+
+    @app.get("/api/bitbucket/repositories/{slug}/pull-requests")
+    def bitbucket_pull_requests(slug: str, state: str = Query(default="open", pattern="^(open|merged|declined)$")):
+        provider = require_bitbucket()
+        with bitbucket_errors():
+            repository = provider.get_repository(f"{provider.workspace}/{slug}")
+            listed = provider.list_pull_requests(repository, state)
+            with connection() as conn:
+                counts = scanned_pull_requests(conn, provider=provider.name, repository_id=repository.id)
+            # The list payload carries abbreviated hashes only. Pull requests
+            # that already have scans are looked up individually (bounded) so
+            # their full head SHA is known and their stale marker is current.
+            budget = STALE_CHECKS_PER_LIST
+            items = []
+            for pull_request in listed:
+                looked_up = False
+                if counts.get(pull_request.id) and budget > 0:
+                    budget -= 1
+                    pull_request = provider.get_pull_request(repository, pull_request.id)
+                    looked_up = True
+                with connection() as conn:
+                    checked = refresh_stale(conn, pull_request) if looked_up else False
+                    latest = pull_request_scans(
+                        conn, provider=provider.name, repository_id=repository.id,
+                        pull_request_id=pull_request.id, limit=1, stale_checked=checked,
+                    ) if counts.get(pull_request.id) else []
+                items.append({
+                    **asdict(pull_request), "scan_count": counts.get(pull_request.id, 0),
+                    "latest_scan": latest[0] if latest else None, "stale_checked": checked,
+                })
+            return {"repository": repository_json(repository), "state": state, "pull_requests": items}
+
+    @app.get("/api/bitbucket/repositories/{slug}/pull-requests/{pull_request_id}")
+    def bitbucket_pull_request(slug: str, pull_request_id: str):
+        provider = require_bitbucket()
+        with bitbucket_errors():
+            repository = provider.get_repository(f"{provider.workspace}/{slug}")
+            pull_request = provider.get_pull_request(repository, pull_request_id)
+        blocked = not_scannable(pull_request)
+        with connection() as conn:
+            checked = refresh_stale(conn, pull_request)
+            scans = pull_request_scans(
+                conn, provider=provider.name, repository_id=repository.id, pull_request_id=pull_request.id,
+                stale_checked=checked,
+            )
+        return {
+            **asdict(pull_request), "repository": repository_json(repository),
+            "scannable": blocked is None, "not_scannable_code": blocked[0] if blocked else None,
+            "not_scannable_reason": blocked[1] if blocked else None, "stale_checked": checked, "scans": scans,
+        }
+
+    @app.post("/api/bitbucket/repositories/{slug}/pull-requests/{pull_request_id}/scans", status_code=201)
+    def scan_bitbucket_pull_request(slug: str, pull_request_id: str, body: PullRequestScanRequest | None = None):
+        """Scan a pull request from its merge base to its current head commit.
+
+        Reads only. The stored scan is bound to the two full SHAs; earlier
+        scans of the same pull request with another head are marked stale.
+        """
+        provider = require_bitbucket()
+        with bitbucket_errors():
+            repository = provider.get_repository(f"{provider.workspace}/{slug}")
+            pull_request = provider.get_pull_request(repository, pull_request_id)
+            with connection() as conn:
+                refresh_stale(conn, pull_request)
+            blocked = not_scannable(pull_request)
+            if blocked:
+                raise BitbucketFailure(409, *blocked)
+            if body and body.head_commit and body.head_commit != pull_request.source_sha:
+                raise BitbucketFailure(
+                    409, "head_changed",
+                    "The pull request has new commits since it was loaded. Reload it and scan again.",
+                )
+            base = provider.merge_base(repository, pull_request.target_sha, pull_request.source_sha)
+            report, changes = scan_change_set(
+                provider, repository, base, pull_request.source_sha, max_import_reads=BITBUCKET_IMPORT_READS,
+            )
+        # Show branch names like a local scan does; the SHAs carry the binding.
+        report["base_ref"], report["head_ref"] = pull_request.target_ref, pull_request.source_ref
+        with connection() as conn:
+            insert_scan(
+                conn, report, provider=provider.name, repository_id=repository.id, pull_request_id=pull_request.id,
+                base_commit=changes.base_sha, head_commit=changes.head_sha,
+            )
+        # Bound to the head Bitbucket reported moments ago, so this one is checked.
+        return read_scan(report["id"], stale_checked=True)
 
     @app.get("/api/repository/status")
     def repository_status():

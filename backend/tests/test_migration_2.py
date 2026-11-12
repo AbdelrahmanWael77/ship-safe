@@ -94,8 +94,11 @@ def test_v0_2_database_goes_straight_to_version_2_and_stays_usable_through_the_a
     before = stored(db_file)
 
     with TestClient(create_app(demo_root=demo, db_file=db_file), base_url="http://127.0.0.1") as client:
-        assert client.get(f"/api/scans/{report['id']}").json() == report
-        assert client.get(f"/api/scans/{report['id']}/export").json() == report
+        # A row from before migration 2 is served with an empty binding beside the unchanged report.
+        legacy = {"provider": "local-git", "repository_id": None, "pull_request_id": None, "base_commit": None,
+                  "head_commit": None, "comparison": "direct", "stale": False, "stale_at": None, "stale_checked": False}
+        assert client.get(f"/api/scans/{report['id']}").json() == {**report, "binding": legacy}
+        assert client.get(f"/api/scans/{report['id']}/export").json() == {**report, "binding": legacy}
         assert client.get(f"/api/scans/{report['id']}/ai/handoff").status_code == 200
         assert client.get(f"/api/scans/{report['id']}/ai/reviews").json() == [{"summary": "x"}]
         assert client.get(f"/api/scans/{report['id']}/ai/reviews/latest").json() == {"summary": "x"}
@@ -143,7 +146,7 @@ def test_local_scan_is_stored_with_provider_repository_and_full_shas(tmp_path, d
     db_file = tmp_path / "scans.db"
     with TestClient(create_app(demo_root=demo, db_file=db_file), base_url="http://127.0.0.1") as client:
         report = client.post("/api/scans", json={"base_ref": "main", "head_ref": "feature/auth-regression"}).json()
-        assert client.get(f"/api/scans/{report['id']}").json() == report  # the report itself is unchanged
+        assert client.get(f"/api/scans/{report['id']}").json() == report
     base = git(demo, "rev-parse", "main").strip()
     head = git(demo, "rev-parse", "feature/auth-regression").strip()
     assert query(db_file, "SELECT provider, repository_id, pull_request_id, base_commit, head_commit, stale_at FROM scans") == [
@@ -151,7 +154,8 @@ def test_local_scan_is_stored_with_provider_repository_and_full_shas(tmp_path, d
     ]
     assert len(base) == len(head) == 40
     assert (report["base_sha"], report["head_sha"]) == (base[:12], head[:12])
-    assert not {"provider", "repository_id", "base_commit", "head_commit", "stale_at"} & report.keys()
+    stored_report = json.loads(query(db_file, "SELECT report_json FROM scans")[0][0])
+    assert stored_report == {key: value for key, value in report.items() if key != "binding"}  # binding is not stored in the report
 
 
 # -- storage helpers ---------------------------------------------------------

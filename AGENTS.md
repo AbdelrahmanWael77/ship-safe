@@ -22,7 +22,7 @@ These rules apply to every AI coding agent (Claude, Fable, Codex, or any other) 
 - No unsolicited redesign, broad refactor, verbose documents, speculative features, or later-phase work unless a genuine dependency requires it.
 - Security, authorization, data isolation, secrets, and integrity rules in `CLAUDE.md` are never optional shortcuts.
 - Verify with focused tests. Keep tested behaviour, mocks, and assumptions visibly separate. Never claim untested code works.
-- Work on a `feat/p<phase>-<ticket>` branch. Never commit to `main`, merge, or push without the owner's approval.
+- Work on a `feat/p<phase>-<ticket>` branch. Never commit to the default branch (`feat/p1-foundation`; this repository has no `main`), merge, or push without the owner's approval.
 - Edit or merge existing roadmap and status content; never blindly overwrite it.
 
 ## After EVERY task (mandatory, not only near quota limits)

@@ -146,6 +146,8 @@ curl http://127.0.0.1:8000/api/scans
 
 Additional endpoints: `GET /api/health`, `GET /api/scans/{id}`, `GET /api/scans/{id}/export`, `GET /api/repository/status`, `GET /api/scans/{id}/ai/handoff`, `POST /api/scans/{id}/ai/reviews`, `GET /api/scans/{id}/ai/reviews`, and `GET /api/scans/{id}/ai/reviews/latest`.
 
+Read-only Bitbucket Cloud endpoints (backend only, tested against mocked HTTP, never against live Bitbucket; no dashboard screen yet): `GET /api/bitbucket/status`, `GET /api/bitbucket/repositories`, `GET /api/bitbucket/repositories/{slug}/pull-requests`, `GET …/pull-requests/{id}`, `POST …/pull-requests/{id}/scans`. They answer 503 until Bitbucket is configured; see [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Scan your own authorized local repository
 
 The backend starts in a **deny-by-default** mode: it scans only the generated synthetic demo repository. To explicitly authorize another directory (never a client or production repo without permission):

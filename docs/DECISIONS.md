@@ -98,3 +98,30 @@ Decision:
 Alternatives considered: Computed-only staleness (every list view would need a live call per pull request); a boolean flag (loses when it was noticed); adding full SHAs to the report (changes the pinned report contract and the review digest input).
 Security / product impact: Stored reports and imported reviews are untouched. A database migrated to version 2 is refused by older builds. Until task 4 calls `sync_stale`, no scan is ever marked stale.
 Related ticket / commit: P2 task 3, `feat/p2-migration-2`
+
+## 2026-11-12 — Bitbucket API (P2 task 4): comparison, stale rule, limits, error contract
+Decision owner: Mohamed Elsayed (approved 2026-11-12 before implementation; contract accepted 2026-11-12 as the initial contract for task 5, subject to frontend integration validation)
+Problem / tradeoff: Ten open points had to be settled before pull request scans could be exposed (see the task 3 checkpoint).
+Decision:
+1. A pull request is compared **merge base → head** (`GET /merge-base/{target}..{head}`), matching Bitbucket's own view. `base_commit` stores the merge base.
+2. A scan is stale when the pull request **head** commit differs from the scanned one. The target branch moving does not make it stale.
+3. Import analysis over Bitbucket reads at most **200** files. A cut report gains `summary.import_analysis_truncated` and `summary.import_files_skipped`, and the handoff ZIP lists an `INCOMPLETE` limitation.
+4. HTTP 555 (diff too large) fails the scan with 422 `diff_too_large`; there is no per-file fallback.
+5. A pull request whose head (or target) commit cannot be read through the approved repository is refused with 409; fork pull requests are therefore not scannable.
+6. Routes and shapes are those in `docs/ARCHITECTURE.md` ("Bitbucket routes").
+7. Full SHAs and the rest of the binding are served as `binding` beside the report in scan responses and the export. The stored report, the handoff ZIP and the review digest do not contain it.
+8. The stale marker is refreshed on pull request list (only pull requests that already have scans, at most 20 lookups per request), on detail, and on scan.
+9. Bitbucket not configured → 503 `bitbucket_not_configured`.
+10. Provider errors map as tabled in `docs/ARCHITECTURE.md`; a rejected server credential is 502, not 401.
+Approved by Mohamed Elsayed on 2026-11-12: point 3 adds two summary keys to a report **only when the analysis was cut**. Every other report keeps its exact shape (the pinned example and digest inputs are unchanged). This was chosen so the incompleteness travels with the report, as the Phase 2 prompt requires, while keeping "report JSON unchanged" true for all complete reports (guarded by `test_report_summary_keeps_the_pinned_shape_unless_import_analysis_was_actually_cut`).
+Alternatives considered: target tip → head comparison (would show target-branch changes reversed); resolving every listed pull request (one or more requests per pull request on every list).
+Security / product impact: All Bitbucket traffic is GET to `api.bitbucket.org`; no write, clone, or code execution. Verified against mocked HTTP only; the merge-base endpoint and all payload shapes are unconfirmed against the live service. The local scan's older silent cap (first 250 tree entries for import analysis) is unchanged and still unreported.
+Related ticket / commit: P2 task 4, `feat/p2-bitbucket-api`
+
+## 2026-11-12 — `stale_checked`: a scan's stale state says whether it was just checked
+Decision owner: Mohamed Elsayed (asked that the UI can tell checked from unchecked stale status, 2026-11-12)
+Problem / tradeoff: `binding.stale: false` was ambiguous: "compared with Bitbucket just now and current" or "never compared". The pull request list checks at most 20 scanned pull requests, the detail cannot check a pull request whose head is unreadable, and the stored-scan routes never contact Bitbucket.
+Decision: every `binding` carries `stale_checked`, true only when the route that built the response compared that pull request with Bitbucket's current head. The detail response also carries a top-level `stale_checked`. No schema change: it describes the response, not the row.
+Alternatives considered: a stored `stale_checked_at` column (migration 3; would let history screens say "last checked at"), or always re-checking every scanned pull request (unbounded requests).
+Security / product impact: none on data. The UI must show `stale: false, stale_checked: false` as "not checked", never as "current". Documented with a reading table in `docs/ARCHITECTURE.md`.
+Related ticket / commit: P2 task 4, `feat/p2-bitbucket-api`

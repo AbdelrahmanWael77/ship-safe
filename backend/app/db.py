@@ -171,3 +171,56 @@ def sync_stale(
         f"UPDATE scans SET stale_at = ? WHERE {scope} AND head_commit <> ? AND stale_at IS NULL",
         (observed_at, *key, current_head),
     ).rowcount
+
+
+BINDING_COLUMNS = "provider, repository_id, pull_request_id, base_commit, head_commit, stale_at"
+
+
+def binding(row: sqlite3.Row, *, stale_checked: bool = False) -> dict:
+    """What a stored scan was bound to, read from the columns beside the report.
+
+    Served next to the report by the API; never written into ``report_json``.
+    ``comparison`` says how base and head relate: a pull request scan runs
+    from the merge base to the head, any other scan compares the two commits
+    directly. Rows from before migration 2 have no commits ("not commit-bound").
+
+    ``stale`` is the stored marker. ``stale_checked`` is True only when the
+    route that built this response compared the scan's pull request with
+    Bitbucket's current head just before reading it; otherwise ``stale`` is
+    the last recorded state and ``stale: false`` means "not known to be stale".
+    """
+    return {
+        "provider": row["provider"], "repository_id": row["repository_id"],
+        "pull_request_id": row["pull_request_id"],
+        "base_commit": row["base_commit"], "head_commit": row["head_commit"],
+        "comparison": "merge-base" if row["pull_request_id"] is not None else "direct",
+        "stale": row["stale_at"] is not None, "stale_at": row["stale_at"],
+        "stale_checked": stale_checked,
+    }
+
+
+def pull_request_scans(
+    conn: sqlite3.Connection, *, provider: str, repository_id: str, pull_request_id: str, limit: int = 25,
+    stale_checked: bool = False,
+) -> list[dict]:
+    """Stored scans of one pull request, newest first, without their reports."""
+    rows = conn.execute(
+        f"SELECT id, created_at, report_json, {BINDING_COLUMNS} FROM scans"
+        " WHERE provider = ? AND repository_id = ? AND pull_request_id = ?"
+        " ORDER BY created_at DESC, rowid DESC LIMIT ?",
+        (provider, repository_id, pull_request_id, limit),
+    ).fetchall()
+    return [
+        {"id": row["id"], "created_at": row["created_at"], "summary": json.loads(row["report_json"]).get("summary"),
+         "binding": binding(row, stale_checked=stale_checked)}
+        for row in rows
+    ]
+
+
+def scanned_pull_requests(conn: sqlite3.Connection, *, provider: str, repository_id: str) -> dict[str, int]:
+    """``{pull_request_id: number of stored scans}`` for one repository."""
+    return dict(conn.execute(
+        "SELECT pull_request_id, COUNT(*) FROM scans"
+        " WHERE provider = ? AND repository_id = ? AND pull_request_id IS NOT NULL GROUP BY pull_request_id",
+        (provider, repository_id),
+    ).fetchall())

@@ -11,7 +11,7 @@ Build a genuine, safely tested ShipSafe v1.0 in five independently reviewable se
 - One person can fill several roles, but every ticket needs *one named owner* and *a different human reviewer when possible*.
 
 ## Branches, worktrees, and ownership
-1. Protect `main` with human PR review; do not merge directly from a Claude session.
+1. Protect the default branch (`feat/p1-foundation`; this repository has no `main`) with human PR review; do not merge directly from a Claude session.
 2. Ticket branches: `feat/p<phase>-<ticket>` / `fix/p<phase>-<ticket>`; include issue number if your team has one.
 3. Each simultaneous Claude session uses its own branch or Git worktree. Avoid shared working directories and avoid concurrent edits to the same file.
 4. Agree on API schema changes upfront. Backend owner publishes sample JSON and types; frontend owner integrates against them.

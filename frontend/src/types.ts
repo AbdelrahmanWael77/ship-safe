@@ -14,6 +14,9 @@ export interface FileChange {
   deletions: number;
   changed_functions: string[];
   diff: string;
+  /** Optional: absent in reports stored before truncation reporting existed; treat as false / 0. */
+  diff_truncated?: boolean;
+  diff_lines_omitted?: number;
 }
 export interface Finding {
   id: string;
@@ -35,6 +38,9 @@ export interface ScanSummary {
   risk_score: number;
   recommendation: string;
   test_status: string;
+  /** Optional: absent in reports stored before truncation reporting existed; treat as false / 0. */
+  truncated?: boolean;
+  files_omitted?: number;
 }
 export interface ImpactedModule { path: string; imports_changed: string[] }
 export interface TestSuggestion { category: string; file: string; scenario: string }

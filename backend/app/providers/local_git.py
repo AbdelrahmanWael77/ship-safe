@@ -22,10 +22,15 @@ def run_git(repo: Path, *args: str, allow_error: bool = False) -> str:
 
     Arguments are passed as an array (never through a shell). Output is decoded
     as UTF-8 with replacement so results do not depend on the OS locale.
+
+    ``--literal-pathspecs`` makes Git treat every path argument as an exact
+    file name: without it a tree entry named ``*``, ``?.py``, ``[a].py`` or
+    ``:!a.py`` is read as a glob or pathspec magic and its "diff" silently
+    covers other files.
     """
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo), *args], capture_output=True,
+            ["git", "--literal-pathspecs", "-C", str(repo), *args], capture_output=True,
             encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT_SECONDS, check=False,
         )
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
@@ -79,13 +84,32 @@ class LocalGitProvider:
             path = Path(repository_id).expanduser().resolve()
         except (OSError, ValueError, RuntimeError) as exc:
             raise RepositoryNotFound("Repository path is not a valid local path") from exc
-        if not any(path.is_relative_to(root) for root in self.allowed_roots):
+        if not self._allowed(path):
             raise RepositoryAccessDenied(
                 "Repository is outside SHIPSAFE_ALLOWED_ROOT. Scanning other paths requires explicit local configuration."
             )
         if not (path / ".git").exists():
             raise RepositoryNotFound("This path is not a local Git repository")
+        # ".git" may be a one-line file ("gitdir: <elsewhere>") that redirects
+        # Git to another repository, as worktrees and submodules do. The
+        # directory that actually holds the objects must be allowed as well,
+        # or a planted file inside an allowed root would read any repository
+        # on the machine.
+        common = run_git(path, "rev-parse", "--path-format=absolute", "--git-common-dir", allow_error=True).strip()
+        try:
+            common_dir = Path(common).resolve() if common else None
+        except (OSError, ValueError, RuntimeError):
+            common_dir = None
+        if common_dir is None:
+            raise RepositoryNotFound("This path is not a local Git repository")
+        if not self._allowed(common_dir):
+            raise RepositoryAccessDenied(
+                "Repository metadata (.git) points outside SHIPSAFE_ALLOWED_ROOT; refusing to read it."
+            )
         return self._ref(path, None)
+
+    def _allowed(self, path: Path) -> bool:
+        return any(path.is_relative_to(root) for root in self.allowed_roots)
 
     def _ref(self, path: Path, default_branch: str | None) -> RepositoryRef:
         return RepositoryRef(
@@ -124,13 +148,16 @@ class LocalGitProvider:
                 counts[name] = (int(added) if added.isdigit() else 0, int(deleted) if deleted.isdigit() else 0)
         files = []
         for status, path in entries[:max_files]:
-            patch = run_git(repo, *_SAFE_DIFF, "--unified=3", base_sha, head_sha, "--", path)
+            # "./" anchors the name to the repository root; with
+            # --literal-pathspecs this is what makes a name such as "::x"
+            # resolve as a file instead of failing as "outside repository".
+            patch = run_git(repo, *_SAFE_DIFF, "--unified=3", base_sha, head_sha, "--", f"./{path}")
             additions, deletions = counts.get(path, (0, 0))
             files.append(FileDelta(path=path, status=status, additions=additions, deletions=deletions, patch=patch))
         return ChangeSet(
             repository=repository, base_ref=base_ref, head_ref=head_ref,
             base_sha=base_sha, head_sha=head_sha, files=tuple(files),
-            truncated=len(entries) > max_files,
+            truncated=len(entries) > max_files, omitted=max(0, len(entries) - max_files),
         )
 
     def list_files(self, repository: RepositoryRef, commit: str) -> list[str]:

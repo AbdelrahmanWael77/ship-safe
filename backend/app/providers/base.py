@@ -117,6 +117,8 @@ class ChangeSet:
     files: tuple[FileDelta, ...]
     #: True when more than ``max_files`` files changed and the rest were dropped.
     truncated: bool = False
+    #: How many changed files were dropped (0 when ``truncated`` is False).
+    omitted: int = 0
 
 
 @runtime_checkable

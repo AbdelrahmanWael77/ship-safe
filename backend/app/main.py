@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, ValidationError
 
 from .ai_handoff import AIReviewImport, MAX_IMPORT_BYTES, context_digest, handoff_zip, saved_review, validate_review_binding
@@ -17,6 +18,11 @@ from .demo_seed import DEMO_BRANCHES, ensure_demo_repo
 from .errors import RepositoryAccessDenied, ScanError
 from .providers import LocalGitProvider
 from .scanner import git, scan_changes
+
+
+#: Host header values the development API answers to. Port suffixes are
+#: ignored by the middleware, so "127.0.0.1:8000" matches "127.0.0.1".
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 
 
 class ScanRequest(BaseModel):
@@ -51,6 +57,12 @@ def create_app(
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
         allow_methods=["GET", "POST"], allow_headers=["*"],
     )
+    # DNS rebinding defence. The API has no authentication and binds to
+    # loopback; a hostile web page can still reach it by pointing its own
+    # domain at 127.0.0.1, which makes the request same-origin and bypasses
+    # CORS. Such requests carry the attacker's Host header, so refuse every
+    # Host that is not a loopback name. Added last so it runs before CORS.
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOOPBACK_HOSTS)
 
     @app.get("/api/health")
     def health():

@@ -52,7 +52,7 @@ def make_repo(path, base_files, head_files, head_branch="feature/change"):
 def api(tmp_path):
     root = tmp_path / "demo"
     app = create_app(demo_root=root, db_file=tmp_path / "data" / "scans.db", allowed_root=root)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         yield client, root
 
 
@@ -150,7 +150,7 @@ def test_demo_scan_still_works_when_another_root_is_authorized(tmp_path):
     demo, workspace = tmp_path / "demo", tmp_path / "workspace"
     workspace.mkdir()
     app = create_app(demo_root=demo, db_file=tmp_path / "scans.db", allowed_root=workspace)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         default = client.post("/api/scans", json={})
         assert default.status_code == 201, default.text
         explicit = client.post("/api/scans", json={"repository_path": str(demo)})
@@ -289,11 +289,11 @@ def test_identical_refs_report_no_changes(api):
 
 def test_scans_and_reviews_survive_an_application_restart(tmp_path):
     root, db_file = tmp_path / "demo", tmp_path / "data" / "scans.db"
-    with TestClient(create_app(demo_root=root, db_file=db_file, allowed_root=root)) as client:
+    with TestClient(create_app(demo_root=root, db_file=db_file, allowed_root=root), base_url="http://127.0.0.1") as client:
         report, digest = scan_and_handoff(client)
         saved = client.post(f"/api/scans/{report['id']}/ai/reviews", json=review_body(report, digest))
         assert saved.status_code == 201, saved.text
-    with TestClient(create_app(demo_root=root, db_file=db_file, allowed_root=root)) as client:
+    with TestClient(create_app(demo_root=root, db_file=db_file, allowed_root=root), base_url="http://127.0.0.1") as client:
         assert [row["id"] for row in client.get("/api/scans").json()] == [report["id"]]
         assert client.get(f"/api/scans/{report['id']}").json() == report
         assert client.get(f"/api/scans/{report['id']}/ai/context").json()["context_digest"] == digest

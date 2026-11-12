@@ -131,10 +131,52 @@ def _commit_of(root: Path, ref: str) -> str | None:
         return None
 
 
+DEMO_AUTHOR_EMAIL = "demo@shipsafe.invalid"
+#: Written into .git/config when this module creates the repository.
+DEMO_MARKER = "shipsafe.demo"
+
+
 def _is_generated_demo(root: Path) -> bool:
-    """True when ``main``'s root commit is the one this module writes."""
-    first = _git(root, "log", "--reverse", "--format=%s", "main").splitlines()
-    return bool(first) and first[0] == INITIAL_COMMIT_SUBJECT
+    """True when this module created the repository.
+
+    New repositories carry the ``shipsafe.demo`` marker. Repositories seeded
+    before the marker existed are recognised by their root commit: the
+    subject *and* the synthetic author e-mail this module writes.
+    """
+    try:
+        if _git(root, "config", "--get", DEMO_MARKER) == "true":
+            return True
+    except subprocess.CalledProcessError:
+        pass
+    first = _git(root, "log", "--reverse", "--format=%s%n%ae", "main").splitlines()
+    return len(first) >= 2 and first[0] == INITIAL_COMMIT_SUBJECT and first[1] == DEMO_AUTHOR_EMAIL
+
+
+def _foreign_changes(root: Path) -> list[str]:
+    """Uncommitted changes to tracked files that this module did not make.
+
+    An interrupted seed can leave the current demo branch with its own change
+    written or staged but not committed. That change is recognised (right
+    branch, right file, identical content) and is not "foreign". Anything
+    else is someone's work. Untracked files are ignored: repair never removes
+    or commits them.
+    """
+    try:
+        head = _git(root, "symbolic-ref", "--quiet", "--short", "HEAD")
+    except subprocess.CalledProcessError:
+        head = ""
+    expected = DEMO_BRANCH_FILES.get(head, {})
+    foreign = []
+    # Tracked files whose index or working tree differs from HEAD; untracked
+    # files are not listed. Plain paths, one per line.
+    for path in _git(root, "diff", "--name-only", "HEAD", "--").splitlines():
+        try:
+            ours = expected.get(path) is not None and (root / path).read_text(encoding="utf-8") == expected[path]
+        except (OSError, UnicodeDecodeError):
+            ours = False
+        if not ours:
+            foreign.append(path)
+    return foreign
 
 
 def ensure_demo_repo(root: Path) -> Path:
@@ -155,8 +197,9 @@ def ensure_demo_repo(root: Path) -> Path:
             )
         root.mkdir(parents=True, exist_ok=True)
         _git(root, "init", "-b", "main")
+        _git(root, "config", DEMO_MARKER, "true")
     _git(root, "config", "user.name", "ShipSafe Demo")
-    _git(root, "config", "user.email", "demo@shipsafe.invalid")
+    _git(root, "config", "user.email", DEMO_AUTHOR_EMAIL)
     # Demo commits are synthetic; never let an inherited global setting ask for a signing key.
     _git(root, "config", "commit.gpgsign", "false")
 
@@ -166,25 +209,33 @@ def ensure_demo_repo(root: Path) -> Path:
             raise ConfigError(f"Demo directory holds a repository without the generated 'main'; refusing to modify it: {root}")
         for name, content in BASE_FILES.items():
             _put(root, name, content)
-        _git(root, "add", ".")
+        _git(root, "add", "--", *BASE_FILES)
         _git(root, "commit", "-q", "-m", INITIAL_COMMIT_SUBJECT)
         main_sha = _commit_of(root, "main")
     elif not _is_generated_demo(root):
         raise ConfigError(f"Demo directory holds a repository that is not the generated demo; refusing to modify it: {root}")
 
-    repaired = False
-    for branch, changes in DEMO_BRANCH_FILES.items():
-        tip = _commit_of(root, branch)
-        if tip is not None and tip != main_sha:
-            continue  # branch exists and carries its commit
-        repaired = True
+    missing = [
+        branch for branch in DEMO_BRANCH_FILES
+        if (tip := _commit_of(root, branch)) is None or tip == main_sha  # absent, or carries no commit
+    ]
+    if not missing:
+        return root
+    # Repair rewrites the working tree. Never discard someone's edits to do it.
+    dirty = _foreign_changes(root)
+    if dirty:
+        raise ConfigError(
+            f"Demo repository needs repair (missing branches: {', '.join(missing)}) but has uncommitted "
+            f"changes to {', '.join(dirty)}. Commit or discard them, or delete the directory: {root}"
+        )
+    for branch in missing:
+        changes = DEMO_BRANCH_FILES[branch]
         _git(root, "checkout", "-q", "-f", "-B", branch, "main")
         for name, content in changes.items():
             _put(root, name, content)
-        _git(root, "add", ".")
+        _git(root, "add", "--", *changes)  # only the demo's own files; stray files are left alone
         _git(root, "commit", "-q", "-m", f"Demo: {branch.split('/')[-1].replace('-', ' ')}")
-    if repaired:
-        _git(root, "checkout", "-q", "-f", "main")
+    _git(root, "checkout", "-q", "-f", "main")
     return root
 
 

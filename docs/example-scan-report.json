@@ -15,7 +15,9 @@
     "finding_count": 3,
     "risk_score": 97,
     "recommendation": "Critical review required",
-    "test_status": "not_run"
+    "test_status": "not_run",
+    "truncated": false,
+    "files_omitted": 0
   },
   "files": [
     {
@@ -24,7 +26,9 @@
       "additions": 2,
       "deletions": 0,
       "changed_functions": [],
-      "diff": "diff --git a/README.md b/README.md\nindex 75fab92..5a9a5d0 100644\n--- a/README.md\n+++ b/README.md\n@@ -2,3 +2,5 @@\n \n A tiny invoice service used only for ShipSafe security and regression demos.\n No real customers, invoices, credentials, or payments exist here.\n+\n+Release candidate: simplified invoice processing."
+      "diff": "diff --git a/README.md b/README.md\nindex 75fab92..5a9a5d0 100644\n--- a/README.md\n+++ b/README.md\n@@ -2,3 +2,5 @@\n \n A tiny invoice service used only for ShipSafe security and regression demos.\n No real customers, invoices, credentials, or payments exist here.\n+\n+Release candidate: simplified invoice processing.",
+      "diff_truncated": false,
+      "diff_lines_omitted": 0
     },
     {
       "path": "app/api.py",
@@ -34,7 +38,9 @@
       "changed_functions": [
         "invoice_payload"
       ],
-      "diff": "diff --git a/app/api.py b/app/api.py\nindex e2a4514..194de66 100644\n--- a/app/api.py\n+++ b/app/api.py\n@@ -1,5 +1,5 @@\n-\"\"\"Stable client-facing response schema.\"\"\"\n+\"\"\"Changed client-facing response schema (contains a deliberate regression).\"\"\"\n \n \n def invoice_payload(invoice_id: str, total_cents: int) -> dict:\n-    return {\"invoice_id\": invoice_id, \"total_cents\": total_cents, \"status\": \"ready\"}\n+    return {\"invoice_id\": invoice_id, \"total\": total_cents, \"status\": \"ready\"}"
+      "diff": "diff --git a/app/api.py b/app/api.py\nindex e2a4514..194de66 100644\n--- a/app/api.py\n+++ b/app/api.py\n@@ -1,5 +1,5 @@\n-\"\"\"Stable client-facing response schema.\"\"\"\n+\"\"\"Changed client-facing response schema (contains a deliberate regression).\"\"\"\n \n \n def invoice_payload(invoice_id: str, total_cents: int) -> dict:\n-    return {\"invoice_id\": invoice_id, \"total_cents\": total_cents, \"status\": \"ready\"}\n+    return {\"invoice_id\": invoice_id, \"total\": total_cents, \"status\": \"ready\"}",
+      "diff_truncated": false,
+      "diff_lines_omitted": 0
     },
     {
       "path": "app/auth.py",
@@ -44,7 +50,9 @@
       "changed_functions": [
         "get_invoice_for_user"
       ],
-      "diff": "diff --git a/app/auth.py b/app/auth.py\nindex 6c60e45..1bc56b4 100644\n--- a/app/auth.py\n+++ b/app/auth.py\n@@ -2,6 +2,5 @@\n \n \n def get_invoice_for_user(user_id: str, invoice: dict) -> dict:\n-    if invoice[\"owner_id\"] != user_id:\n-        raise PermissionError(\"Invoice does not belong to this user\")\n+    # Regression: ownership verification was accidentally removed.\n     return invoice"
+      "diff": "diff --git a/app/auth.py b/app/auth.py\nindex 6c60e45..1bc56b4 100644\n--- a/app/auth.py\n+++ b/app/auth.py\n@@ -2,6 +2,5 @@\n \n \n def get_invoice_for_user(user_id: str, invoice: dict) -> dict:\n-    if invoice[\"owner_id\"] != user_id:\n-        raise PermissionError(\"Invoice does not belong to this user\")\n+    # Regression: ownership verification was accidentally removed.\n     return invoice",
+      "diff_truncated": false,
+      "diff_lines_omitted": 0
     },
     {
       "path": "app/pricing.py",
@@ -54,7 +62,9 @@
       "changed_functions": [
         "invoice_total"
       ],
-      "diff": "diff --git a/app/pricing.py b/app/pricing.py\nindex 69eae30..872125f 100644\n--- a/app/pricing.py\n+++ b/app/pricing.py\n@@ -1,7 +1,5 @@\n-\"\"\"Precise monetary calculations.\"\"\"\n-from decimal import Decimal, ROUND_HALF_UP\n+\"\"\"Refactored monetary calculations (contains a deliberate regression).\"\"\"\n \n \n-def invoice_total(unit_price: str, quantity: int) -> Decimal:\n-    amount = Decimal(unit_price) * Decimal(quantity)\n-    return amount.quantize(Decimal(\"0.01\"), rounding=ROUND_HALF_UP)\n+def invoice_total(unit_price: str, quantity: int) -> float:\n+    return round(float(unit_price) * quantity, 2)"
+      "diff": "diff --git a/app/pricing.py b/app/pricing.py\nindex 69eae30..872125f 100644\n--- a/app/pricing.py\n+++ b/app/pricing.py\n@@ -1,7 +1,5 @@\n-\"\"\"Precise monetary calculations.\"\"\"\n-from decimal import Decimal, ROUND_HALF_UP\n+\"\"\"Refactored monetary calculations (contains a deliberate regression).\"\"\"\n \n \n-def invoice_total(unit_price: str, quantity: int) -> Decimal:\n-    amount = Decimal(unit_price) * Decimal(quantity)\n-    return amount.quantize(Decimal(\"0.01\"), rounding=ROUND_HALF_UP)\n+def invoice_total(unit_price: str, quantity: int) -> float:\n+    return round(float(unit_price) * quantity, 2)",
+      "diff_truncated": false,
+      "diff_lines_omitted": 0
     }
   ],
   "findings": [

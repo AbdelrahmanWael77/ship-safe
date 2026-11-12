@@ -14,7 +14,7 @@ from app.ai_handoff import SCHEMA_VERSION, MAX_IMPORT_BYTES
 def scanned_client(tmp_path):
     repo = tmp_path / "demo"
     app = create_app(demo_root=repo, db_file=tmp_path / "data" / "scans.db", allowed_root=repo)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         response = client.post('/api/scans', json={"base_ref": "main", "head_ref": "feature/release-candidate"})
         assert response.status_code == 201, response.text
         yield client, response.json()

@@ -16,6 +16,21 @@ __all__ = ["ScanError", "git", "valid_ref", "scan_changes", "scan_repository", "
 
 #: Lines of each file's patch kept in a stored report.
 PATCH_PREVIEW_LINES = 140
+
+
+def _preview(patch: str) -> tuple[str, int]:
+    """First ``PATCH_PREVIEW_LINES`` of ``patch`` and how many lines were cut.
+
+    A cut diff ends with a marker line so it can never be mistaken for a
+    complete one. The marker starts with "..." so diff-line parsers that look
+    at "+" / "-" prefixes ignore it.
+    """
+    lines = patch.splitlines()
+    omitted = max(0, len(lines) - PATCH_PREVIEW_LINES)
+    kept = lines[:PATCH_PREVIEW_LINES]
+    if omitted:
+        kept.append(f"... [{omitted} more diff line{'s' if omitted != 1 else ''} not shown; the full diff has {len(lines)} lines]")
+    return "\n".join(kept), omitted
 #: Files at the head commit inspected for imports of changed modules.
 MAX_IMPORT_SCAN_FILES = 250
 
@@ -177,7 +192,9 @@ def scan_changes(provider: ChangeProvider, repository: RepositoryRef, base: str,
     heuristics, and build the report. Reads only; executes nothing.
 
     The returned dict is the persisted report and the public ``Report`` API
-    type; its shape is unchanged from v0.2.
+    type. Its v0.2 shape is preserved; Phase 1 added only the completeness
+    fields ``summary.truncated``, ``summary.files_omitted``,
+    ``files[].diff_truncated`` and ``files[].diff_lines_omitted``.
     """
     started = time.monotonic()
     changes = provider.get_changes(repository, base, head, max_files=MAX_CHANGED_FILES)
@@ -191,9 +208,11 @@ def scan_changes(provider: ChangeProvider, repository: RepositoryRef, base: str,
         after = provider.read_file(repository, head_sha, path) if status != "D" and is_python else ""
         functions = py_functions(after, _changed_new_lines(delta.patch)) if is_python else []
         findings.extend(analyze_risks(path, before, after, delta.patch))
+        diff, diff_lines_omitted = _preview(delta.patch)
         files.append({
             "path": path, "status": status, "additions": delta.additions, "deletions": delta.deletions,
-            "changed_functions": functions, "diff": "\n".join(delta.patch.splitlines()[:PATCH_PREVIEW_LINES]),
+            "changed_functions": functions, "diff": diff,
+            "diff_truncated": diff_lines_omitted > 0, "diff_lines_omitted": diff_lines_omitted,
         })
     severities = {"critical": 42, "high": 26, "medium": 12, "low": 4}
     risk_score = min(99, sum(severities[f["severity"]] for f in findings) + (3 if files else 0))
@@ -225,6 +244,11 @@ def scan_changes(provider: ChangeProvider, repository: RepositoryRef, base: str,
             "lines_removed": sum(f["deletions"] for f in files), "finding_count": len(findings),
             "risk_score": risk_score, "recommendation": level,
             "test_status": "not_run",
+            # Honest-completeness flags: True when changed files were dropped
+            # past MAX_CHANGED_FILES or any stored diff was cut. Line counts
+            # above cover the listed files only.
+            "truncated": changes.truncated or any(f["diff_truncated"] for f in files),
+            "files_omitted": changes.omitted,
         },
         "files": files, "findings": findings, "affected_modules": impacted,
         "test_suggestions": test_suggestions,

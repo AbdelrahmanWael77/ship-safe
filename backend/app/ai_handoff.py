@@ -34,13 +34,38 @@ def review_context(report: dict) -> dict:
         "static_findings": report["findings"],
         "affected_modules": report["affected_modules"],
         "test_suggestions": report["test_suggestions"],
-        "limitations": [
-            "Git patches are truncated to the first 140 lines per file in this starter project.",
-            "Static heuristics are suspicions, not validated bugs.",
-            "No repository tests were executed by ShipSafe.",
-            "The review package does not necessarily include the full repository context.",
-        ],
+        "limitations": _limitations(report),
     }
+
+
+def _limitations(report: dict) -> list[str]:
+    """Honest statements about what the package does and does not contain.
+
+    Reports written before the truncation fields existed lack them; they are
+    read as "nothing known to be cut" and get the generic wording.
+    """
+    summary = report.get("summary", {})
+    omitted_files = int(summary.get("files_omitted") or 0)
+    cut = [f["path"] for f in report["files"] if f.get("diff_truncated")]
+    items = []
+    if omitted_files:
+        items.append(
+            f"INCOMPLETE: {omitted_files} changed file{'s' if omitted_files != 1 else ''} beyond the first "
+            f"{len(report['files'])} are not included; the scan summary counts only the included files."
+        )
+    if cut:
+        items.append(
+            f"Git patches are truncated to the first 140 lines per file; {len(cut)} included "
+            f"file{'s are' if len(cut) != 1 else ' is'} cut (\"diff_truncated\": true) and end with a marker line."
+        )
+    else:
+        items.append("Git patches are limited to the first 140 lines per file; no included patch was cut.")
+    items += [
+        "Static heuristics are suspicions, not validated bugs.",
+        "No repository tests were executed by ShipSafe.",
+        "The review package does not necessarily include the full repository context.",
+    ]
+    return items
 
 
 def context_digest(report: dict) -> str:

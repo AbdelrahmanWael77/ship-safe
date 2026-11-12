@@ -183,7 +183,7 @@ def test_filesystem_root_is_refused_as_an_allowlist(tmp_path):
 
 def test_cors_is_limited_to_the_local_dashboard(tmp_path):
     app = create_app(demo_root=tmp_path / "demo", db_file=tmp_path / "scans.db")
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         allowed = client.options("/api/scans", headers={"Origin": "http://127.0.0.1:5173", "Access-Control-Request-Method": "POST"})
         assert allowed.headers.get("access-control-allow-origin") == "http://127.0.0.1:5173"
         denied = client.options("/api/scans", headers={"Origin": "https://example.invalid", "Access-Control-Request-Method": "POST"})
@@ -220,7 +220,7 @@ def test_existing_v0_2_database_is_adopted_without_touching_history(tmp_path, de
     before = rows(db_file)
     assert db.schema_version(db_file) == 0
 
-    with TestClient(create_app(demo_root=demo, db_file=db_file)) as client:
+    with TestClient(create_app(demo_root=demo, db_file=db_file), base_url="http://127.0.0.1") as client:
         assert client.get(f"/api/scans/{report['id']}").json() == report
         assert client.get(f"/api/scans/{report['id']}/ai/handoff").status_code == 200
 

@@ -32,6 +32,21 @@ def _path(value: str | os.PathLike | None, default: Path, name: str) -> Path:
         raise ConfigError(f"{name} is not a usable path") from exc
 
 
+def _scannable_root(value: str | os.PathLike | None, default: Path, name: str) -> Path:
+    """A directory that will become an allowed scanning root.
+
+    A filesystem or drive root is refused: every repository on the machine
+    would otherwise become scannable through the unauthenticated API.
+    """
+    root = _path(value, default, name)
+    if root == Path(root.anchor):
+        raise ConfigError(
+            f"{name} must not be a filesystem or drive root; "
+            "name the specific directory you have approved for scanning."
+        )
+    return root
+
+
 def load_settings(
     env: Mapping[str, str] | None = None, *,
     demo_root: Path | None = None, db_file: Path | None = None, allowed_root: Path | None = None,
@@ -42,17 +57,14 @@ def load_settings(
     rather than starting with an allowlist that would cover a whole drive.
     """
     env = os.environ if env is None else env
-    demo_dir = _path(demo_root or env.get("SHIPSAFE_DEMO_DIR"), BACKEND_DIR / "demo-repo", "SHIPSAFE_DEMO_DIR")
+    # The demo directory is always an allowed root, so it gets the same
+    # drive-root check as SHIPSAFE_ALLOWED_ROOT.
+    demo_dir = _scannable_root(demo_root or env.get("SHIPSAFE_DEMO_DIR"), BACKEND_DIR / "demo-repo", "SHIPSAFE_DEMO_DIR")
     db_path = _path(db_file or env.get("SHIPSAFE_DB_PATH"), BACKEND_DIR / ".shipsafe-data" / "scans.db", "SHIPSAFE_DB_PATH")
     roots = [demo_dir]
     extra = allowed_root or env.get("SHIPSAFE_ALLOWED_ROOT")
     if extra not in (None, ""):
-        root = _path(extra, demo_dir, "SHIPSAFE_ALLOWED_ROOT")
-        if root == Path(root.anchor):
-            raise ConfigError(
-                "SHIPSAFE_ALLOWED_ROOT must not be a filesystem or drive root; "
-                "name the specific workspace directory you have approved for scanning."
-            )
+        root = _scannable_root(extra, demo_dir, "SHIPSAFE_ALLOWED_ROOT")
         if root not in roots:
             roots.append(root)
     return Settings(demo_dir=demo_dir, db_path=db_path, allowed_roots=tuple(roots))

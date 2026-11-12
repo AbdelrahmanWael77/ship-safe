@@ -65,7 +65,7 @@ def test_git_ref_injection_is_rejected(demo):
 def test_api_persists_scan_and_exports_json(tmp_path):
     root = tmp_path / "demo"
     app = create_app(demo_root=root, db_file=tmp_path / "db" / "scans.db", allowed_root=root)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         assert client.get("/api/health").status_code == 200
         demo = client.get("/api/demo").json()
         assert len(demo["branches"]) == 6
@@ -84,6 +84,6 @@ def test_api_persists_scan_and_exports_json(tmp_path):
 def test_path_outside_allowlist_is_rejected(tmp_path):
     root = tmp_path / "demo"
     app = create_app(demo_root=root, db_file=tmp_path / "scans.db", allowed_root=root)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         response = client.post("/api/scans", json={"repository_path": str(tmp_path / "outside")})
         assert response.status_code == 403

@@ -10,7 +10,8 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 - **Branch / latest commit:** (remote state verified with `git ls-remote origin` on 2026-11-13)
   - GitHub has **no `main` branch**. The default and integration branch is `feat/p1-foundation`, at `98c9d92`, which is the merge of pull request #1 (`feat/p2-bitbucket-provider`, P2 task 1). The rule files name it accordingly.
   - On GitHub, stacked on `08b3b1b`, none merged: `feat/p2-bitbucket-settings` (`ebc9068`, task 2) → `feat/p2-migration-2` (`82d14ed`, task 3) → `feat/p2-bitbucket-api` (`790b293`, task 4). Pushed by the owner on 2026-11-12.
-  - `feat/p2-frontend-screens`, cut from `790b293` — P2 task 5, in progress. **Local only, not pushed.** Milestone 1 (frontend toolchain and test setup, `1851b6f`) and milestone 2 (`truncated` flag on the pull request list, `3bf1fbd`) milestone 3 (types, API helper, stale logic and badge, `4a4eeb3`) and milestone 4 (Bitbucket navigation, connection status, Repositories screen, branch head) are committed. Pull Requests and PR Analysis screens do not exist yet.
+  - **Working branch: `feat/p2-frontend-pr-screens`** (HEAD `11d057f` "Merge Phase 2 work into main", which contains milestones 1–4). Milestones 5–7 of task 5 (Pull Requests screen, PR Analysis screen, mock mode) were committed on this branch on 2026-11-13 with the owner's approval (local only, not pushed).
+  - Earlier note, kept for history: `feat/p2-frontend-screens`, cut from `790b293`. Milestone 1 (frontend toolchain and test setup, `1851b6f`) and milestone 2 (`truncated` flag on the pull request list, `3bf1fbd`) milestone 3 (types, API helper, stale logic and badge, `4a4eeb3`) and milestone 4 (Bitbucket navigation, connection status, Repositories screen, branch head) are committed.
 
 ### Completed and verified
 - Baseline v0.2 ("Phase 0") — imported as `10f3cee`.
@@ -26,12 +27,14 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 2. [x] Bitbucket settings and credential loading
 3. [x] Migration 2: provider / repository / PR / full base+head SHA columns, stale marker
 4. [x] API: list repositories, list PRs, scan a PR bound to exact SHAs, stale detection
-5. [ ] Frontend: Repositories, Pull Requests, PR Analysis screens with typed client (**in progress**)
+5. [x] Frontend: Repositories, Pull Requests, PR Analysis screens with typed client (code and tests done and committed 2026-11-13; not yet viewed in a real browser)
    - [x] Milestone 1: toolchain (Vite 6.4.6, Vitest 5.1.0, Testing Library), `npm test`, smoke test of the demo dashboard
    - [x] Milestone 2: `truncated` flag on the pull request list (approved backend change), 7 new backend tests
    - [x] Milestone 3: typed contracts (`types.ts`), API helper with `ApiError` (`api.ts`), stale logic and `StaleBadge` (`bitbucket/`), 32 new frontend tests
    - [x] Milestone 4: Bitbucket navigation group, connection status, Repositories screen, 29 new frontend tests
-   - [ ] Pull Requests screen; PR Analysis screen with scanning; integration with existing pages and history; development mock mode; docs
+   - [x] Milestone 5: Pull Requests screen (repository picker, state filter, search, truncated notice, stale badge, Analyze, Open in Bitbucket), 13 tests
+   - [x] Milestone 6: PR Analysis screen (pull request facts, scan with `head_commit`, `head_changed` reload, stored scans, bound full SHAs, findings, diff); history rows marked for pull request scans; "Open in dashboard"; 15 tests
+   - [x] Milestone 7: development mock mode (`npm run dev:mock`, permanent MOCK DATA banner, canned data absent from the production bundle), 7 tests; README line
 6. [ ] Human-run read-only live smoke test (PASS or BLOCKED), docs, gates
 
 ### Current working state
@@ -45,7 +48,8 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
   - Contract for task 5: `docs/ARCHITECTURE.md` → "Bitbucket routes" (shapes, nullability, error kinds, stale reading table, the 20-lookup limit), plus `docs/example-bitbucket-responses.json` (mock data), guarded against drift by a test.
   - Provider additions: `merge_base()`, `PullRequestNotFound`, `ChangeTooLarge` (HTTP 555).
   - Earlier tasks: settings with `config.Secret`, schema version 2, `db.insert_scan`, `db.sync_stale`.
-- **Not wired:** no dashboard screen calls the Bitbucket routes; `frontend/src/types.ts` does not know `binding` or the new shapes. The Claude handoff ZIP does not carry the binding (Phase 3).
+- **Functional now (frontend, task 5):** sidebar BITBUCKET group (Repositories, Pull requests); Pull requests → Analyze → PR analysis → scan → findings, diff, bound commits, stale badge, Open in Bitbucket. A pull request scan opened with "Open in dashboard" uses the existing pages (export, Claude review); those pages then show a "Scan source" panel (repository, PR, full commits, stale badge) and Bitbucket labels instead of the demo labels (2 regression tests in `App.test.tsx`).
+- **Not wired:** the Claude handoff ZIP does not carry the binding (Phase 3).
 - **Changed files (task 4 commit on `feat/p2-bitbucket-api`):**
   - `backend/app/main.py` — Bitbucket routes, error mapping, `binding` in scan responses, `stale_checked`, `create_app(bitbucket=)` test seam
   - `backend/app/db.py` — `binding`, `pull_request_scans`, `scanned_pull_requests`
@@ -70,6 +74,13 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
   - `cd backend && python -m pytest -q` → 229 passed (unchanged; only an error message in `scripts/dev.py` changed outside the frontend).
   - **Not verified:** Node 20 (unsupported from now on), `vite preview`.
   - **OUTSTANDING — Windows verification of the toolchain milestone (`1851b6f`): NOT TESTED.** The agent session could not run commands on the owner's machine. To do, in `frontend` on Windows with Node 22.12+ or 24+: `npm ci`, `npm test` (expect 2 passed), `npm run build`, `npm audit` (expect 0); then `python scripts\dev.py` and a walk through the demo.
+- **Milestones 5–7 — Pull Requests, PR Analysis, mock mode (2026-11-13, Windows 11, Node 24.22.2, Python from `.venv`; on `feat/p2-frontend-pr-screens`):**
+  - `cd frontend && npm test` → 100 passed (7 files); `npm run build` → ✓ built (231.88 kB JS, 38.56 kB CSS); `npm audit` → 0 vulnerabilities
+  - `cd backend && ..\.venv\Scripts\python -m pytest -q` → 236 passed, 1 warning (no backend change)
+  - Production bundle searched for the canned data (`mock-workspace`, `Mock Ledger`, `Mock finding`, the banner text): 0 occurrences. The only "MOCK DATA" string left is the pill label in the report header.
+  - Changed files: `frontend/src/App.tsx`, `App.test.tsx`, `components.tsx` (new; presentational pieces moved out of `App.tsx` unchanged), `bitbucket.css`, `bitbucket/BitbucketSection.tsx`, `client.ts`, `pages.ts`, `ErrorPanel.tsx`, `PullRequestsPage.tsx` (+test), `PrAnalysisPage.tsx` (+test), `mock.ts` (+test), `test/fixtures.ts`, `frontend/package.json` (`dev:mock` script), `README.md`.
+  - **NOT TESTED:** the new screens in a real browser (real backend or `npm run dev:mock`), narrow-screen layout, live Bitbucket. All evidence is jsdom with stubbed `fetch` or the in-memory mock.
+  - First Windows run of the frontend toolchain: `npm test`, `npm run build` and `npm audit` pass on Windows 11 / Node 24.22.2 (`npm ci` and the `scripts\dev.py` demo walk were not repeated).
 - **Milestone 4 — navigation, connection status, Repositories screen (2026-11-13, Linux cloud container, Node 22.23.4):**
   - `cd frontend && npm test` → 63 passed (4 files); `npm run build` → ✓ built (209.71 kB JS, 35.63 kB CSS); `npm audit` → 0
   - Headless browser against the real backend with Bitbucket not configured: the Repositories page shows the setup message and the navigation entry is tagged "Off". Configured, error and narrow-screen states were viewed with the two Bitbucket routes intercepted in the browser (mock answers), because no Bitbucket credential exists. No request went to Bitbucket.
@@ -100,7 +111,9 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 - The provider's HTTP client is never closed (it lives for the whole process).
 
 ### Next exact task
-- **Goal (P2 task 5):** Frontend — Repositories, Pull Requests, and PR Analysis screens against the task 4 routes, with a typed client.
+- **Open for Phase 2:** a browser walk-through: `cd frontend && npm run dev:mock` (Pull requests → Analyze #101 → scan; #106 shows the head-changed reload, #104 the fork refusal, #105 the oversized diff), and `python scripts\dev.py` to confirm the demo and the "Bitbucket is not configured" state.
+- **Then (P2 task 6):** human-run read-only live smoke test against Bitbucket with approved credentials set only in the server's local `.env` (PASS or BLOCKED); record observed payload differences; update docs and gates. An agent must not ask for or handle the token.
+- **Task 5 reference (done):** Frontend — Repositories, Pull Requests, and PR Analysis screens against the task 4 routes, with a typed client.
 - **Likely files:** `frontend/src/types.ts` (add `Binding`, `BitbucketRepository`, `PullRequestListItem`, `PullRequestDetail`, `PullRequestScan`, optional `binding` on `Report`/`ScanHistory`, the two optional summary keys), `frontend/src/App.tsx`, `frontend/src/styles.css`.
 - **Done when:** the dashboard lists approved repositories and their pull requests, scans a pull request and shows its diff and findings, shows the bound commits, a stale badge and an "Open in Bitbucket" link, handles loading, empty, error and "Bitbucket not configured" (503 `bitbucket_not_configured`) states, sends `head_commit` with the scan request and handles 409 `head_changed`; any mock data is labelled as mock; `npm run build` passes; the existing demo flow is unchanged.
 - **Decided (owner, 2026-11-12/13):** Vitest with Testing Library (installed in milestone 1); development-only fixture mock mode with a permanent "MOCK DATA" banner; a `truncated` flag on the pull request list; new files under `frontend/src/bitbucket/`; Playwright end-to-end deferred until after task 6. Response shapes are accepted as the initial contract, subject to integration.

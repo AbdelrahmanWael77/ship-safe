@@ -5,7 +5,7 @@
 // The data is MOCK (workspace "acme", placeholder SHAs), not live Bitbucket.
 import examples from '../../../docs/example-bitbucket-responses.json'
 import report from '../../../docs/example-scan-report.json'
-import type { BitbucketRepository, BitbucketStatus, DemoInfo, Report, ScanHistory } from '../types'
+import type { Binding, BitbucketRepository, BitbucketStatus, DemoInfo, PullRequestDetail, PullRequestList, Report, ScanHistory } from '../types'
 
 const example = <T,>(prefix: string): T => {
   const found = Object.entries(examples).find(([key]) => key.startsWith(prefix))
@@ -36,3 +36,22 @@ export const demoRoutes = () => ({
   [`/api/scans/${report.id}`]: { body: demoReport() },
   [`/api/scans/${report.id}/ai/reviews`]: { body: [] },
 })
+
+// -- pull requests (same published examples) ---------------------------------
+export const SCAN_ID = '36667b1c-2bd4-48e4-971f-cd972b008e00'
+export const pullRequestsBeforeScan = () => example<PullRequestList>('GET /api/bitbucket/repositories/ledger/pull-requests (before any scan)')
+export const pullRequestsAfterHeadMoved = () => example<PullRequestList>('GET /api/bitbucket/repositories/ledger/pull-requests (after the head moved)')
+/** Pull request 7 with one stored scan that is stale (its head moved to dddd…). */
+export const pullRequestDetail = () => example<PullRequestDetail>('GET /api/bitbucket/repositories/ledger/pull-requests/7 (after the head moved)')
+export const headChangedError = () => example<{ detail: string; code: string }>('POST .../pull-requests/7/scans with an outdated head_commit')
+/** A full report (the published scan report example) with the binding the scan route returns. */
+export const pullRequestScanReport = (): Report => {
+  const { binding } = example<{ binding: Binding }>('POST /api/bitbucket/repositories/ledger/pull-requests/7/scans')
+  return { ...demoReport(), id: SCAN_ID, binding }
+}
+/** The same report as the stored-scan route returns it: never compared with Bitbucket. */
+export const storedScanReport = (): Report => {
+  const report = pullRequestScanReport()
+  return { ...report, binding: { ...(report.binding as Binding), stale_checked: false } }
+}
+export const pullRequestHistoryItem = () => example<ScanHistory>('GET /api/scans (history item')

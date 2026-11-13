@@ -35,7 +35,7 @@ npm install
 cd ..
 ```
 
-For an exact, reproducible install use `npm ci` instead of `npm install`. Frontend checks, run from `frontend`: `npm test` (Vitest with Testing Library, in jsdom; no backend needed) and `npm run build`.
+For an exact, reproducible install use `npm ci` instead of `npm install`. Frontend checks, run from `frontend`: `npm test` (Vitest with Testing Library, in jsdom; no backend needed) and `npm run build`. `npm run dev:mock` starts the dashboard with invented Bitbucket data (development server only, permanent MOCK DATA banner, no request to Bitbucket) so the Bitbucket screens can be looked at without a credential.
 
 ### 3. Start both applications
 

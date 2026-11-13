@@ -54,7 +54,7 @@ Optional. With none of these set, Bitbucket is off and ShipSafe behaves exactly 
 - **Scope.** Give the credential read access to repositories and pull requests only. ShipSafe makes no Bitbucket writes.
 - **Where the token lives.** Only in your local `.env` (git-ignored) or an approved secret store. Never commit it, paste it into a chat or prompt, or put it in a `VITE_*` variable.
 - **Where it does not appear.** The token is wrapped in `config.Secret`: it is absent from `repr(settings)`, cannot be copied by `dataclasses.asdict`, serialised to JSON, or pickled, and is not in any log line or API response (`backend/tests/test_bitbucket_settings.py`). Only the HTTP client that talks to `api.bitbucket.org` receives it.
-- **Current limit.** At startup the API builds the read-only connector from these settings and sends no request. The `/api/bitbucket/*` routes use it (see `docs/ARCHITECTURE.md`); no dashboard screen does yet. It has never been run against live Bitbucket.
+- **Current limit.** At startup the API builds the read-only connector from these settings and sends no request. The `/api/bitbucket/*` routes use it (see `docs/ARCHITECTURE.md`), and the dashboard's Repositories, Pull requests and PR analysis screens call those routes. It has never been run against live Bitbucket.
 
 ## Network binding
 

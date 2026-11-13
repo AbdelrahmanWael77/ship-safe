@@ -12,10 +12,12 @@ import {
   Sparkles, Terminal, TrendingUp, X, Zap,
 } from 'lucide-react'
 import { api, API_BASE as API } from './api'
+import { DiffViewer, Empty, FileIcon, FindingCard, Pill, Severity } from './components'
 import { BitbucketSection } from './bitbucket/BitbucketSection'
-import { getBitbucketStatus } from './bitbucket/client'
-import { BITBUCKET_NAV, bitbucketPageLabel, isBitbucketPage } from './bitbucket/pages'
-import type { BitbucketPage } from './bitbucket/pages'
+import { getBitbucketStatus, isMockMode } from './bitbucket/client'
+import { BITBUCKET_NAV, INITIAL_SELECTION, bitbucketNavEntry, bitbucketPageLabel, isBitbucketPage } from './bitbucket/pages'
+import type { BitbucketNavigate, BitbucketPage, BitbucketSelection } from './bitbucket/pages'
+import { StaleBadge } from './bitbucket/StaleBadge'
 import { useLoad } from './bitbucket/useLoad'
 import type { AIReview, DemoInfo, FileChange, Finding, Report, ScanHistory } from './types'
 
@@ -45,14 +47,6 @@ function Logo({ size = 38 }: { size?: number }) {
   </div>
 }
 
-function Pill({ kind = 'neutral', children, dot = false }: { kind?: string; children: ReactNode; dot?: boolean }) {
-  return <span className={`pill pill-${kind}`}>{dot && <span className="pill-dot" />}{children}</span>
-}
-
-function Severity({ level }: { level: string }) {
-  return <Pill kind={level}>{level.toUpperCase()}</Pill>
-}
-
 function ProgressRing({ score }: { score: number }) {
   const category = riskColor(score)
   return <div className={`progress-ring ${category}`} style={{ '--score': `${score}%` } as CSSProperties}>
@@ -63,52 +57,12 @@ function ProgressRing({ score }: { score: number }) {
   </div>
 }
 
-function Empty({ icon: Icon = ShieldCheck, title, description }: { icon?: typeof ShieldCheck; title: string; description: string }) {
-  return <div className="empty-state"><div className="empty-icon"><Icon size={26} /></div><h3>{title}</h3><p>{description}</p></div>
-}
-
 function StatCard({ icon: Icon, title, value, note, tone }: { icon: typeof Activity; title: string; value: string | number; note: string; tone: string }) {
   return <div className="stat-card panel">
     <div className="stat-top"><span className={`stat-icon tone-${tone}`}><Icon size={19} /></span><span className="stat-minigraph"><i/><i/><i/><i/><i/><i/></span></div>
     <div className="stat-value">{value}</div>
     <div className="stat-label">{title}</div>
     <div className="stat-note">{note}</div>
-  </div>
-}
-
-function FileIcon({ path }: { path: string }) {
-  return <span className={`file-icon ${path.endsWith('.py') ? 'python' : 'doc'}`}>
-    {path.endsWith('.py') ? <Code2 size={17}/> : <FileText size={17}/>}
-  </span>
-}
-
-function DiffViewer({ file }: { file: FileChange }) {
-  const lines = file.diff.split('\n')
-  return <div className="diff-viewer">
-    <div className="diff-toolbar"><span><FileDiff size={16}/> {file.path}</span><span className="diff-count">{file.diff_truncated && <Pill kind="warning">Diff truncated · {file.diff_lines_omitted ?? 0} lines not shown</Pill>}<b>+{file.additions}</b><em>-{file.deletions}</em></span></div>
-    <div className="code-lines" role="region" aria-label={`Git diff for ${file.path}${file.diff_truncated ? ' (truncated)' : ''}`}>
-      {lines.map((line, index) => {
-        let klass = 'normal'
-        if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff --git') || line.startsWith('index ')) klass = 'meta'
-        else if (line.startsWith('@@') || line.startsWith('... [')) klass = 'hunk'
-        else if (line.startsWith('+')) klass = 'add'
-        else if (line.startsWith('-')) klass = 'remove'
-        return <div className={`code-line ${klass}`} key={index}><span className="line-num">{index + 1}</span><span>{line || ' '}</span></div>
-      })}
-    </div>
-  </div>
-}
-
-function FindingCard({ finding, onOpenFile }: { finding: Finding; onOpenFile: (path: string) => void }) {
-  return <div className="finding-card panel">
-    <div className="finding-top">
-      <div className={`finding-icon finding-${finding.severity}`}><AlertTriangle size={20}/></div>
-      <div className="finding-heading"><div className="finding-title-row"><h3>{finding.title}</h3><Severity level={finding.severity}/></div><div className="finding-meta"><span>{finding.category}</span><span>•</span><button className="text-link" onClick={() => onOpenFile(finding.file)}>{finding.file}{finding.line != null ? `:${finding.line}` : ''}<ArrowUpRight size={12}/></button></div></div>
-    </div>
-    <p className="finding-description">{finding.explanation}</p>
-    <div className="evidence"><div className="micro-label"><Terminal size={13}/> Code evidence</div><code>{finding.evidence}</code></div>
-    <div className="recommendation"><span><Sparkles size={15}/> Suggested next step</span><p>{finding.recommendation}</p></div>
-    <div className="finding-bottom"><Pill kind="muted"><CircleHelp size={12}/> Unverified suspicion</Pill><span>Static analysis</span></div>
   </div>
 }
 
@@ -129,6 +83,11 @@ export default function App() {
   const [aiReviews, setAIReviews] = useState<AIReview[]>([])
   const [aiFile, setAIFile] = useState<File | null>(null)
   const [importingAI, setImportingAI] = useState(false)
+  const [bitbucketSelection, setBitbucketSelection] = useState<BitbucketSelection>(INITIAL_SELECTION)
+  const bitbucketNavigate: BitbucketNavigate = (next, change) => {
+    if (change) setBitbucketSelection(previous => ({ ...previous, ...change }))
+    setPage(next)
+  }
 
   const refreshHistory = useCallback(async () => {
     const records = await api<ScanHistory[]>('/api/scans')
@@ -219,20 +178,22 @@ export default function App() {
   const pageName = NAV.find(n => n.id === page)?.label || bitbucketPageLabel(page) || 'Overview'
   // Asked once at start; a failure here never touches the demo flow or the error banner.
   const bitbucketStatus = useLoad(getBitbucketStatus, 'bitbucket-status')
+  // A Bitbucket pull request scan is never labelled as the local demo.
+  const pullRequestBinding = report?.binding && report.binding.provider === 'bitbucket-cloud' && report.binding.pull_request_id != null ? report.binding : null
   const latestAI = aiReviews[0]
   const filteredFindings = report?.findings.filter(f => `${f.title} ${f.category} ${f.file}`.toLowerCase().includes(search.toLowerCase())) || []
 
   return <div className="app-layout">
     <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
       <div className="brand"><Logo/><div><strong>ShipSafe<span className="brand-period">.</span></strong><small>RELEASE GUARDIAN</small></div></div>
-      <div className="workspace-picker"><div className="workspace-symbol"><Layers3 size={16}/></div><div><strong>Demo workspace</strong><small>LedgerLite project</small></div><ChevronDown size={15}/></div>
+      <div className="workspace-picker"><div className="workspace-symbol"><Layers3 size={16}/></div><div><strong>{pullRequestBinding ? 'Bitbucket' : 'Demo workspace'}</strong><small>{pullRequestBinding ? pullRequestBinding.repository_id : 'LedgerLite project'}</small></div><ChevronDown size={15}/></div>
       <div className="sidebar-section-label">WORKSPACE</div>
       <nav className="nav-list" aria-label="Primary navigation">
         {NAV.filter(item => item.id !== 'settings').map(item => <button className={`nav-item ${page === item.id ? 'active' : ''}`} key={item.id} onClick={() => { setPage(item.id); setSidebarOpen(false) }}><item.icon size={18}/><span>{item.label}</span>{item.id === 'findings' && !!report?.findings.length && <b className="nav-count">{report.findings.length}</b>}</button>)}
       </nav>
       <div className="sidebar-section-label tools-label">BITBUCKET</div>
       <nav className="nav-list" aria-label="Bitbucket navigation">
-        {BITBUCKET_NAV.map(item => <button className={`nav-item ${page === item.id ? 'active' : ''}`} key={item.id} onClick={() => { setPage(item.id); setSidebarOpen(false) }}><item.icon size={18}/><span>{item.label}</span>{bitbucketStatus.data && !bitbucketStatus.data.configured && <b className="nav-tag" title="Bitbucket is not configured on the server">Off</b>}</button>)}
+        {BITBUCKET_NAV.map(item => <button className={`nav-item ${bitbucketNavEntry(page) === item.id ? 'active' : ''}`} key={item.id} onClick={() => { setPage(item.id); setSidebarOpen(false) }}><item.icon size={18}/><span>{item.label}</span>{bitbucketStatus.data && !bitbucketStatus.data.configured && <b className="nav-tag" title="Bitbucket is not configured on the server">Off</b>}</button>)}
       </nav>
       <div className="sidebar-section-label tools-label">PREFERENCES</div>
       <nav className="nav-list"><button className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => { setPage('settings'); setSidebarOpen(false) }}><Settings2 size={18}/><span>Configuration</span></button></nav>
@@ -245,19 +206,19 @@ export default function App() {
     <div className="main-wrap">
       <header className="topbar">
         <div className="topbar-left"><button className="menu-button" onClick={() => setSidebarOpen(!sidebarOpen)} aria-label="Toggle menu"><Menu size={22}/></button><span>Workspace</span><ChevronRight size={14}/><strong>{pageName}</strong></div>
-        <div className="topbar-right"><span className="top-live"><span className="online-dot"/> LIVE DEMO</span><span className="divider-v"/><span className="header-icon"><CircleHelp size={18}/></span><div className="avatar">SS</div></div>
+        <div className="topbar-right"><span className="top-live"><span className="online-dot"/> {pullRequestBinding ? 'BITBUCKET SCAN' : 'LIVE DEMO'}</span><span className="divider-v"/><span className="header-icon"><CircleHelp size={18}/></span><div className="avatar">SS</div></div>
       </header>
-      <main className="main-content">
+      {import.meta.env.DEV && isMockMode() && <div className="mock-banner" role="status"><strong>MOCK DATA</strong> Development mock mode: everything on the Bitbucket screens is invented. Nothing is read from Bitbucket.</div>}`n      <main className="main-content">
         {error && <div className="alert alert-error"><AlertCircle size={18}/><span>{error}</span><button onClick={() => setError(null)}><X size={17}/></button></div>}
         {notice && <div className="alert alert-success"><CheckCircle2 size={18}/><span>{notice}</span><button onClick={() => setNotice(null)}><X size={17}/></button></div>}
         {loading && !report ? <div className="initial-load"><div className="spinner"/><h2>Connecting to Git analysis…</h2><p>Preparing the synthetic LedgerLite repository and loading your first scan.</p></div> : null}
         {page === 'overview' && <>
           <div className="page-heading dashboard-heading">
             <div><div className="eyebrow"><span className="eyebrow-line"/> RELEASE INTELLIGENCE</div><h1>Ship with confidence<span className="title-dot">.</span></h1><p>Understand what's changing, spot hidden risks, and release with evidence—not assumptions.</p></div>
-            <div className="heading-actions"><Pill kind="demo" dot>LOCAL DEMO</Pill><button className="secondary-button" onClick={() => setPage('history')}><History size={16}/> View history</button></div>
+            <div className="heading-actions">{pullRequestBinding ? <Pill kind="good" dot>BITBUCKET · READ-ONLY</Pill> : <Pill kind="demo" dot>LOCAL DEMO</Pill>}<button className="secondary-button" onClick={() => setPage('history')}><History size={16}/> View history</button></div>
           </div>
           <div className="hero-scan panel">
-            <div className="hero-scan-copy"><div className="hero-title"><span className="hero-icon"><GitPullRequest size={21}/></span><div><h2>Analyze a code change</h2><p>Compare real Git commits in the synthetic LedgerLite repository.</p></div></div></div>
+            <div className="hero-scan-copy"><div className="hero-title"><span className="hero-icon"><GitPullRequest size={21}/></span><div><h2>{pullRequestBinding ? 'Run a demo analysis' : 'Analyze a code change'}</h2><p>{pullRequestBinding ? 'This form scans the synthetic demo repository, not Bitbucket. The report below is a Bitbucket pull request scan.' : 'Compare real Git commits in the synthetic LedgerLite repository.'}</p></div></div></div>
             <div className="scan-form">
               <div className="scan-field"><label>BASE BRANCH</label><div className="select-shell"><GitBranch size={17}/><select value={base} onChange={e => setBase(e.target.value)}><option value="main">main</option>{demo?.branches.map(b => <option key={b.ref} value={b.ref}>{shortRef(b.ref)}</option>)}</select><ChevronDown size={15}/></div></div>
               <div className="compare-arrow"><ArrowRight size={18}/></div>
@@ -267,6 +228,15 @@ export default function App() {
             <div className="scan-foot"><LockKeyhole size={14}/><span>Scans only the trusted synthetic repo by default · No code is executed</span><span className="scan-foot-right">{report ? `Last scan ${relative(report.created_at)}` : 'Ready to analyze'}</span></div>
           </div>
           {report && <>
+            {pullRequestBinding && <div className="panel bb-state bb-source" role="region" aria-label="Scan source">
+              <GitPullRequest size={22}/>
+              <div>
+                <h3>Bitbucket pull request #{pullRequestBinding.pull_request_id} · <code>{pullRequestBinding.repository_id}</code> <StaleBadge binding={pullRequestBinding}/></h3>
+                <p><code>{report.head_ref}</code> → <code>{report.base_ref}</code> · scanned {new Date(report.created_at).toLocaleString()} · read-only, nothing was written to Bitbucket</p>
+                <p>Base ({pullRequestBinding.comparison === 'merge-base' ? 'merge base' : 'direct'}) <code>{pullRequestBinding.base_commit}</code> → head <code>{pullRequestBinding.head_commit}</code></p>
+              </div>
+              <button className="secondary-button" onClick={() => bitbucketNavigate('pr-analysis', { slug: pullRequestBinding.repository_id?.split('/').pop() ?? null, pullRequestId: pullRequestBinding.pull_request_id })}>Open pull request <ArrowRight size={15}/></button>
+            </div>}
             <div className="section-heading"><div><h2>Release overview</h2><p>Actual results from <code>{report.base_sha}</code> → <code>{report.head_sha}</code></p></div><span className="subtle-time"><Clock3 size={15}/>{report.duration_ms} ms analysis</span></div>
             <div className="stat-grid">
               <StatCard icon={FileCode2} title="Files changed" value={report.summary.files_omitted ? `${report.summary.files_changed}+` : report.summary.files_changed} note={`+${report.summary.lines_added} additions · -${report.summary.lines_removed} deletions${report.summary.files_omitted ? ` · ${report.summary.files_omitted} more files not listed` : ''}`} tone="blue"/>
@@ -290,7 +260,7 @@ export default function App() {
             <div className="footnote"><Info size={15}/> Git findings are heuristic. Imported AI suggestions are separate, unverified, and never change test execution status.</div>
           </>}
         </>}
-        {isBitbucketPage(page) && <BitbucketSection page={page} status={bitbucketStatus}/>}
+        {isBitbucketPage(page) && <BitbucketSection page={page} status={bitbucketStatus} selection={bitbucketSelection} navigate={bitbucketNavigate} onScanned={() => { void refreshHistory().catch(() => undefined) }} onOpenReport={openHistory}/>}
         {page !== 'overview' && !isBitbucketPage(page) && <>
           <div className="subpage-heading"><div className="eyebrow"><span className="eyebrow-line"/> WORKSPACE / {page.toUpperCase()}</div><div className="subpage-title"><div><h1>{pageName}<span className="title-dot">.</span></h1><p>{({overview:'',changes:'Review actual changed files, functions, and Git patch details.',findings:'Investigate suspected problems and the evidence behind them.',tests:'Identify missing regression coverage. No tests are claimed as executed.',ai:'Human-mediated Claude Code review. No API keys, no direct model calls.',history:'Go back to previous local analysis reports.',settings:'Local-first setup, security boundaries, and data sources.'} as Record<Page,string>)[page]}</p></div>{report && page !== 'settings' && <a className="secondary-button export-link" href={`${API}/api/scans/${report.id}/export`} download><Download size={16}/> Export JSON</a>}</div></div>
           {page === 'changes' && report && <div className="code-layout">
@@ -318,10 +288,10 @@ export default function App() {
               <div className="ai-bottom-grid"><div className="panel ai-list-panel"><h3><FlaskConical size={18}/> Suggested regression tests <Pill kind="muted">NOT RUN</Pill></h3>{latestAI.test_ideas.map((idea,i) => <div className="ai-list-item" key={i}><strong>{idea.title}</strong><p>{idea.scenario}</p><small>Expected: {idea.expected_behavior}{idea.file ? ` · ${idea.file}` : ''}</small></div>)}{!latestAI.test_ideas.length && <p className="small-para">No test ideas provided.</p>}</div><div className="panel ai-list-panel"><h3><AlertCircle size={18}/> Review limitations</h3>{latestAI.limitations.map((item,i) => <div className="ai-limitation" key={i}><Info size={16}/><span>{item}</span></div>)}</div></div>
             </> : <div className="panel ai-empty"><div className="ai-empty-icon"><Bot size={32}/></div><h3>No Claude review imported yet</h3><p>Export this scan's handoff bundle and bring back the JSON file created in your own Claude Code session. Your Git analysis will stay intact.</p></div>}
           </div>}
-          {page === 'history' && <div className="panel history-panel"><div className="panel-head"><div><h3>Recent analyses</h3><p>Stored in the local SQLite database</p></div><Pill kind="muted">{history.length} saved</Pill></div><div className="history-table-wrap"><table className="history-table"><thead><tr><th>Comparison</th><th>Scanned</th><th>Files</th><th>Findings</th><th>Risk level</th><th></th></tr></thead><tbody>{history.map(row => <tr key={row.id}><td><div className="comparison-cell"><GitPullRequest size={18}/><div><strong>{shortRef(row.head_ref)}</strong><small>{row.base_ref} → {row.head_ref}</small></div></div></td><td>{new Date(row.created_at).toLocaleString()}</td><td>{row.summary.files_changed}</td><td>{row.summary.finding_count}</td><td><Pill kind={riskColor(row.summary.risk_score)}>{row.summary.risk_score}/100</Pill></td><td><button className="table-action" onClick={() => openHistory(row.id)}>Open <ArrowRight size={14}/></button></td></tr>)}</tbody></table></div>{!history.length && <Empty icon={History} title="No saved scans" description="Run your first branch comparison to start building an evidence history."/>}</div>}
+          {page === 'history' && <div className="panel history-panel"><div className="panel-head"><div><h3>Recent analyses</h3><p>Stored in the local SQLite database</p></div><Pill kind="muted">{history.length} saved</Pill></div><div className="history-table-wrap"><table className="history-table"><thead><tr><th>Comparison</th><th>Scanned</th><th>Files</th><th>Findings</th><th>Risk level</th><th></th></tr></thead><tbody>{history.map(row => <tr key={row.id}><td><div className="comparison-cell"><GitPullRequest size={18}/><div><strong>{shortRef(row.head_ref)}</strong><small>{row.base_ref} → {row.head_ref}</small>{row.binding?.pull_request_id != null && <small className="bb-history-pr">Bitbucket · {row.binding.repository_id} · PR #{row.binding.pull_request_id} <StaleBadge binding={row.binding}/></small>}</div></div></td><td>{new Date(row.created_at).toLocaleString()}</td><td>{row.summary.files_changed}</td><td>{row.summary.finding_count}</td><td><Pill kind={riskColor(row.summary.risk_score)}>{row.summary.risk_score}/100</Pill></td><td><button className="table-action" onClick={() => openHistory(row.id)}>Open <ArrowRight size={14}/></button></td></tr>)}</tbody></table></div>{!history.length && <Empty icon={History} title="No saved scans" description="Run your first branch comparison to start building an evidence history."/>}</div>}
           {page === 'settings' && <div className="settings-grid"><div className="panel settings-panel"><div className="panel-head"><div><h3>Workspace configuration</h3><p>Active development environment</p></div><Settings2 size={18}/></div><div className="settings-row"><span>Workspace name</span><strong>ShipSafe Demo</strong></div><div className="settings-row"><span>Repository</span><strong className="mono smaller">{demo?.repository_path || 'Not connected'}</strong></div><div className="settings-row"><span>Default base</span><strong className="mono">main</strong></div><div className="settings-row"><span>Scanning mode</span><Pill kind="demo">Read-only</Pill></div><div className="settings-row"><span>Data storage</span><strong>Local SQLite</strong></div><div className="settings-row"><span>Test runner</span><Pill kind="warning">Not enabled</Pill></div><div className="settings-row"><span>AI handoff</span><Pill kind="demo">Manual · no API key</Pill></div></div><div className="panel settings-panel"><div className="panel-head"><div><h3>Security boundaries</h3><p>Designed for local, authorized source code</p></div><LockKeyhole size={19}/></div><div className="safe-rule"><CheckCircle2 size={17}/><span>Git commands use argument arrays, never shell interpolation.</span></div><div className="safe-rule"><CheckCircle2 size={17}/><span>Default allowlist includes only the generated synthetic repository.</span></div><div className="safe-rule"><CheckCircle2 size={17}/><span>Scans and JSON imports never execute repository code.</span></div><div className="safe-rule"><CheckCircle2 size={17}/><span>Reports make no claim that suspected vulnerabilities were verified.</span></div><div className="settings-explain">To scan an explicitly approved local repository, set <code>SHIPSAFE_ALLOWED_ROOT</code> in the backend environment and provide its path through the API. Don't grant broad access to untrusted directories.</div></div></div>}
         </>}
-        <footer className="app-footer"><span><Logo size={22}/> ShipSafe <b>v0.2</b></span><span>Evidence-first release intelligence · Synthetic demo repository</span></footer>
+        <footer className="app-footer"><span><Logo size={22}/> ShipSafe <b>v0.2</b></span><span>Evidence-first release intelligence · {pullRequestBinding ? `Bitbucket · ${pullRequestBinding.repository_id}` : 'Synthetic demo repository'}</span></footer>
       </main>
     </div>
   </div>

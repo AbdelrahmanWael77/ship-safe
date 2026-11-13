@@ -7,7 +7,7 @@ import userEvent from '@testing-library/user-event'
 import App from './App'
 import { networkDown, stubApi } from './test/api'
 import type { Routes } from './test/api'
-import { demoReport, demoRoutes, repositories, statusConfigured, statusNotConfigured } from './test/fixtures'
+import { SCAN_ID, demoHistory, demoReport, demoRoutes, pullRequestDetail, pullRequestHistoryItem, pullRequestScanReport, pullRequestsBeforeScan, repositories, statusConfigured, statusNotConfigured, storedScanReport } from './test/fixtures'
 
 const STATUS = '/api/bitbucket/status'
 const REPOS = '/api/bitbucket/repositories'
@@ -69,9 +69,9 @@ describe('existing demo dashboard', () => {
 })
 
 describe('Bitbucket navigation', () => {
-  test('the sidebar has a Bitbucket group with Repositories', async () => {
+  test('the sidebar has a Bitbucket group with Repositories and Pull requests', async () => {
     await start({ [STATUS]: { body: statusConfigured() } })
-    expect(bitbucketNav().getAllByRole('button').map(button => button.textContent)).toEqual(['Repositories'])
+    expect(bitbucketNav().getAllByRole('button').map(button => button.textContent)).toEqual(['Repositories', 'Pull requests'])
   })
 
   test('the status is asked once at start; repositories are not loaded until the page is opened', async () => {
@@ -114,7 +114,7 @@ describe('Bitbucket navigation', () => {
 
   test('not configured: the entry is tagged "Off" and the page explains the setup', async () => {
     const api = await start({ [STATUS]: { body: statusNotConfigured() } })
-    expect(bitbucketNav().getByText('Off')).toBeVisible()
+    expect(bitbucketNav().getAllByText('Off')).toHaveLength(2)  // both entries
 
     await userEvent.click(bitbucketNav().getByRole('button', { name: /Repositories/ }))
     expect(await screen.findByRole('heading', { name: 'Bitbucket is not configured' })).toBeVisible()
@@ -128,5 +128,82 @@ describe('Bitbucket navigation', () => {
     await userEvent.click(bitbucketNav().getByRole('button', { name: 'Repositories' }))
     await userEvent.click(within(await screen.findByRole('alert')).getByRole('button', { name: /Retry/ }))
     expect(await screen.findByText('acme/ledger')).toBeVisible()
+  })
+})
+
+describe('pull requests in the dashboard', () => {
+  const LIST = '/api/bitbucket/repositories/ledger/pull-requests?state=open'
+  const DETAIL = '/api/bitbucket/repositories/ledger/pull-requests/7'
+  const configured = () => ({ [STATUS]: { body: statusConfigured() }, [REPOS]: { body: repositories() }, [LIST]: { body: pullRequestsBeforeScan() }, [DETAIL]: { body: pullRequestDetail() } })
+
+  test('repository → pull request → scan → report; the history is refreshed and the selection survives leaving', async () => {
+    const api = await start({ ...configured(), [`POST ${DETAIL}/scans`]: { status: 201, body: pullRequestScanReport() } })
+    const user = userEvent.setup()
+    await user.click(bitbucketNav().getByRole('button', { name: 'Pull requests' }))
+    await user.click(await screen.findByRole('button', { name: /Analyze pull request 7/ }))
+
+    expect(document.querySelector('.topbar-left strong')).toHaveTextContent('PR analysis')
+    expect(bitbucketNav().getByRole('button', { name: 'Pull requests' })).toHaveClass('active')
+    const historyCalls = api.count('/api/scans')
+    await user.click(await screen.findByRole('button', { name: /Scan this pull request/ }))
+    expect(await screen.findByRole('region', { name: 'Scan report' })).toBeVisible()
+    expect(api.count('/api/scans')).toBe(historyCalls + 1)
+
+    await user.click(within(screen.getByRole('region', { name: 'Bitbucket' })).getByRole('button', { name: 'Pull requests' }))
+    expect(await screen.findByText('#7 Change 7')).toBeVisible()
+    expect(document.querySelector('.alert-error')).toBeNull()
+  })
+
+  test('the scan history marks a pull request scan and never shows it as current', async () => {
+    await start({ ...configured(), '/api/scans': { body: [...demoHistory(), pullRequestHistoryItem()] } })
+    await userEvent.click(primaryNav().getByRole('button', { name: /Scan history/ }))
+    const row = (await screen.findByText(/Bitbucket · acme\/ledger · PR #7/)).closest('tr') as HTMLElement
+    expect(row.querySelector('[data-stale]')).toHaveAttribute('data-stale', 'unchecked')
+    expect(document.querySelectorAll('[data-stale]')).toHaveLength(1)  // local scans have no stale state
+  })
+
+  test('"Open in dashboard" loads the stored scan into the existing pages', async () => {
+    await start({ ...configured(), [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
+    const user = userEvent.setup()
+    await user.click(bitbucketNav().getByRole('button', { name: 'Pull requests' }))
+    await user.click(await screen.findByRole('button', { name: /Analyze pull request 7/ }))
+    await user.click(await screen.findByRole('button', { name: /^View/ }))
+    await user.click(await screen.findByRole('button', { name: /Open in dashboard/ }))
+    expect(await screen.findByRole('heading', { name: 'Release overview' })).toBeVisible()
+    expect(screen.getByText(/Loaded saved scan from/)).toBeVisible()
+  })
+
+  test('a Bitbucket pull request scan is never labelled as the local demo; it shows its repository, PR and commits', async () => {
+    await start({ ...configured(), '/api/scans': { body: [pullRequestHistoryItem(), ...demoHistory()] }, [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
+    expect(screen.queryByText('LOCAL DEMO')).not.toBeInTheDocument()
+    expect(screen.queryByText('LIVE DEMO')).not.toBeInTheDocument()
+    expect(screen.queryByText(/LedgerLite/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Synthetic demo repository/)).not.toBeInTheDocument()
+    expect(screen.getByText('BITBUCKET · READ-ONLY')).toBeVisible()
+    expect(screen.getByText('BITBUCKET SCAN')).toBeVisible()
+
+    const source = within(screen.getByRole('region', { name: 'Scan source' }))
+    expect(source.getByRole('heading', { name: /Bitbucket pull request #7/ })).toBeVisible()
+    expect(source.getByText('acme/ledger')).toBeVisible()
+    expect(source.getByText('a'.repeat(40))).toBeVisible()
+    expect(source.getByText('b'.repeat(40))).toBeVisible()
+    expect(source.getByText(/Base \(merge base\)/)).toBeVisible()
+    expect(document.querySelector('.bb-source [data-stale]')).toHaveAttribute('data-stale', 'unchecked')  // a stored scan is never "current"
+
+    await userEvent.click(source.getByRole('button', { name: /Open pull request/ }))
+    expect(await screen.findByRole('heading', { name: /#7 Change 7/ })).toBeVisible()
+  })
+
+  test('opening a demo scan from the history brings the demo labels back', async () => {
+    await start({ ...configured(), '/api/scans': { body: [pullRequestHistoryItem(), ...demoHistory()] }, [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
+    await userEvent.click(primaryNav().getByRole('button', { name: /Scan history/ }))
+    const demoRow = (await screen.findAllByRole('row')).find(row => !row.textContent?.includes('PR #7') && within(row).queryByRole('button', { name: /Open/ })) as HTMLElement
+    await userEvent.click(within(demoRow).getByRole('button', { name: /Open/ }))
+
+    expect(await screen.findByText('LOCAL DEMO')).toBeVisible()
+    expect(screen.getByText('LIVE DEMO')).toBeVisible()
+    expect(screen.getByText('LedgerLite project')).toBeVisible()
+    expect(screen.queryByRole('region', { name: 'Scan source' })).not.toBeInTheDocument()
+    expect(screen.queryByText('BITBUCKET · READ-ONLY')).not.toBeInTheDocument()
   })
 })

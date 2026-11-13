@@ -79,4 +79,31 @@ Allowed severity values: `critical`, `high`, `medium`, `low`. Allowed confidence
 - Do not import client-sensitive source, secrets, or proprietary diffs without explicit authorization.
 - This application is for local demo/evaluation. Do not expose its unauthenticated endpoints to the internet.
 
+## Operating model for a company Team subscription
+
+Who does what:
+
+- **Each reviewer uses their own approved Claude Code installation and their own sign-in.** The review runs on the reviewer's machine, from the extracted package folder, in an interactive session the reviewer starts.
+- **ShipSafe has no Claude credential of any kind.** It holds no Anthropic API key, never signs in, never reads or stores Claude session files or tokens, and never starts Claude Code. There is nothing to configure on the server for this.
+- **Bitbucket access is separate.** The read-only Bitbucket token lives only in the ShipSafe server's local `.env`. It is never in the browser, in a review package, or given to Claude Code.
+
+Rules:
+
+1. **Get approval to share the source first.** A package contains patches of real code. For anything other than the synthetic demo, ShipSafe refuses the export until the person confirms they may share it; that confirmation is theirs to give only if the repository's owner allows the code to be sent to Claude under the company's Team plan terms.
+2. **Inspect the package before using it** (checklist below). Redaction of secret-looking values is best-effort.
+3. **Never share sign-ins.** No shared accounts, no copying of Claude session files or credentials between people or machines, no passing a subscription to someone who has none. A person without approved access asks for it; they do not borrow it.
+4. **One package, one scan.** A review is valid only for the scan it was exported from. After new commits on a pull request, scan again and export again; the earlier review is kept and shown as stale.
+5. **A review is advice.** Imported findings are unverified suggestions. They never change the static findings, the risk score or the test status, and they are not an approval to merge or release. A human decides.
+6. **Nothing is executed.** ShipSafe stores a proposed patch as text and never applies it. Claude is told not to run code; if a reviewer runs anything on their own machine, that is outside ShipSafe and is not evidence in ShipSafe.
+
+## Source-export review checklist (reviewer, before giving the package to Claude Code)
+
+- [ ] I am allowed to share this repository's code with Claude under our Team plan, and I confirmed it in the export dialog for that reason.
+- [ ] `PACKAGE.json`: `source` names the repository, pull request and commits I expect; `scan_id` is the scan I meant to export.
+- [ ] `review-input.json`: I searched the patches for credentials, tokens, private keys, connection strings, customer names and personal data. `[REDACTED:...]` markers are present where I expected them and nothing sensitive remains. If something does, I do not use the package; I report it.
+- [ ] `PACKAGE.json` → `incomplete`, `patches_truncated`, `patches_omitted`: I know what is missing from the package and will not read the review as covering it.
+- [ ] I extracted the package into a new, empty folder that contains nothing else.
+- [ ] I am signed in to Claude Code as myself.
+- [ ] Afterwards: I read `claude-review.json` before importing it, it contains no secret or personal data, and I deleted the extracted folder when done.
+
 Official docs: https://code.claude.com/docs/en/setup and https://code.claude.com/docs/en/legal-and-compliance

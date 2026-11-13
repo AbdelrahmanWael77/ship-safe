@@ -42,12 +42,12 @@ Each reviewer signs into their **own approved** Claude Code installation and run
 - Integrator: schema coordination, diff review, commit binding.
 
 ## Acceptance gates
-- [ ] Selected scan/PR yields correct commit-scoped review ZIP.
-- [ ] A developer can import a well-formed review from their Claude Code session.
-- [ ] Imported findings are visibly UNVERIFIED and never overwrite static evidence.
-- [ ] Invalid/wrong-commit imports are rejected; older reviews marked stale.
-- [ ] No Claude API key, session-token extraction, automatic code execution, unauthorized source sharing.
-- [ ] Automated tests and frontend build actually run or are documented BLOCKED.
+- [x] Selected scan/PR yields correct commit-scoped review ZIP. *(2026-11-13: automated tests, local scan and mocked Bitbucket pull request scan. Evidence: `docs/handoffs/P3-CLAUDE-REVIEW-SESSION_HANDOFF.md`.)*
+- [ ] A developer can import a well-formed review from their Claude Code session. *(NOT TESTED: only synthetic JSON fixtures were imported. Needs one real run by a person in their own Claude Code.)*
+- [x] Imported findings are visibly UNVERIFIED and never overwrite static evidence. *(Automated tests; not viewed in a real browser.)*
+- [x] Invalid/wrong-commit imports are rejected; older reviews marked stale. *(Automated tests; stale with mocked Bitbucket only.)*
+- [x] No Claude API key, session-token extraction, automatic code execution, unauthorized source sharing. *(Code search of the application sources on 2026-11-13 plus tests; the acknowledgement gate reduces, and cannot prevent, unauthorized sharing by a person who confirms falsely.)*
+- [x] Automated tests and frontend build actually run or are documented BLOCKED. *(Backend 299 passed, frontend 119 passed, build passed.)*
 
 ## Phase 3 handoff
 Contributors fill the session template; integrator merges and updates canonical handoff, status, matrix and decisions. Record whether a **real authenticated Claude Code session** was executed or only synthetic JSON fixtures were tested. Checkpoint `shipsafe-phase-3` with approval. **Stop; do not add test execution until Phase 4.**

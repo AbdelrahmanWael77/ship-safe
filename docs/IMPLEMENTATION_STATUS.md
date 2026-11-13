@@ -12,8 +12,17 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 1. [x] Trusted identity + minimal review package (committed `d0d19d2` on `feat/p3-review-package`, cut from `74661f4`)
 2. [x] Claude Code review prompt/schema v2 (committed `779932e`)
 3. [x] Strict import and history (committed `dd4c6db`)
-4. [x] Functional UX (**uncommitted** on `feat/p3-review-package`)
-5. [ ] Operating model documentation for the Team subscription
+4. [x] Functional UX (committed `73a658c`)
+5. [x] Operating model documentation for the Team subscription, gates and matrix from executed evidence, session handoff (**uncommitted** on `feat/p3-review-package`)
+
+**Phase 3 state:** all five tasks are implemented; five of six acceptance gates are ticked in `prompts/PHASE-03-CLAUDE-REVIEW.md`. The gate "a developer can import a well-formed review from their Claude Code session" is **NOT TESTED** (synthetic JSON fixtures only). Phase 3 is not tagged and not merged. Handoff: `docs/handoffs/P3-CLAUDE-REVIEW-SESSION_HANDOFF.md`.
+
+**Phase 4 readiness (checked 2026-11-13 on the owner's Windows machine):** `docker.exe` is installed (Docker Desktop) but the daemon was not running, so no isolated runner was available at that moment; `podman` is not installed; `wsl.exe` exists. Phase 4 has not been started. Per `CLAUDE.md`, repository tests must never run on the host; without a verified isolated runner the Run action must fail closed (BLOCKED).
+
+### Phase 3 task 5 — done 2026-11-13 (documentation and evidence only)
+- **What changed:** `docs/CLAUDE-CODE-HANDOFF.md` gained "Operating model for a company Team subscription" and a "Source-export review checklist"; `docs/ACCEPTANCE_MATRIX.md` Phase 3 rows filled from the executed runs (with what is not covered); gates ticked in the Phase 3 prompt; `docs/handoffs/P3-CLAUDE-REVIEW-SESSION_HANDOFF.md` written.
+- **Evidence gathered for the "no API key / no execution" gate:** code search of 32 application source files: no `anthropic` / Claude API reference; process execution only in `local_git.py` and `demo_seed.py` (Git commands, since Phase 1); `proposed_patch` appears only in the schema, instructions and template.
+- **No code changed;** no test re-run was needed (last runs: backend 299 passed, frontend 119 passed, build ✓).
 
 ### Phase 3 task 4 — done 2026-11-13 (Windows 11, Node 24.22.2; frontend only)
 - **What changed (Claude Review page, `frontend/src/App.tsx`):** "Previous reviews" table from `GET …/ai/reviews/history` (imported time, this scan or earlier scan with its head commit, suggestion, finding count, stale badge, Show); falls back to this scan's reviews if the route cannot be read. The newest review of the scan on screen is shown by default; a review of an earlier scan is shown only when picked, with the stale warning and a line saying it does not describe the scan on screen. "Static scan and imported review, side by side" panel: static suspicions and imported findings labelled apart, linked through `related_static_finding_ids`, with "Test evidence: none". The import result (success, or the API's reason for 409 / 413 / 422, or the local size refusal) is shown next to the import control instead of the page banner.

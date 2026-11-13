@@ -62,6 +62,57 @@ MIGRATIONS: tuple[Migration, ...] = (
         """CREATE INDEX IF NOT EXISTS idx_scans_pull_request
             ON scans(provider, repository_id, pull_request_id, created_at)""",
     )),
+    Migration(3, "test proposals (untrusted text, commit-bound) and append-only human decisions", (
+        # New tables only; no existing table or row is touched.
+        """CREATE TABLE IF NOT EXISTS test_proposals (
+            id TEXT PRIMARY KEY,
+            scan_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            target_path TEXT NOT NULL,        -- validated relative path of the proposed new test file
+            content TEXT NOT NULL,            -- untrusted test source; stored, never executed here
+            content_digest TEXT NOT NULL,     -- SHA-256 of content
+            origin TEXT NOT NULL,             -- 'human' or 'imported_ai_review'
+            finding_ref TEXT,                 -- static or imported-AI finding id, if any
+            rationale TEXT,
+            base_commit TEXT NOT NULL,        -- full SHAs copied from the scan
+            head_commit TEXT NOT NULL,
+            FOREIGN KEY(scan_id) REFERENCES scans(id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_test_proposals_scan ON test_proposals(scan_id, created_at)",
+        """CREATE TABLE IF NOT EXISTS test_proposal_decisions (
+            id TEXT PRIMARY KEY,
+            proposal_id TEXT NOT NULL,
+            decision TEXT NOT NULL,           -- 'approved' or 'rejected'
+            decided_at TEXT NOT NULL,
+            decided_by TEXT NOT NULL,         -- self-declared name; ShipSafe has no authentication
+            note TEXT,
+            FOREIGN KEY(proposal_id) REFERENCES test_proposals(id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_test_proposal_decisions ON test_proposal_decisions(proposal_id, decided_at)",
+    )),
+    Migration(4, "test runs: every run request, including those blocked because nothing could run", (
+        # New table only. A blocked request has status 'blocked' and NULL in
+        # started_at, finished_at, exit_code and output: nothing was executed.
+        """CREATE TABLE IF NOT EXISTS test_runs (
+            id TEXT PRIMARY KEY,
+            proposal_id TEXT NOT NULL,
+            scan_id TEXT NOT NULL,
+            requested_at TEXT NOT NULL,
+            requested_by TEXT NOT NULL,       -- self-declared name; ShipSafe has no authentication
+            status TEXT NOT NULL,             -- 'blocked' is the only status this build writes
+            reason TEXT,
+            runner TEXT NOT NULL,             -- runner identity as reported at request time
+            base_commit TEXT NOT NULL,
+            head_commit TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            exit_code INTEGER,
+            output TEXT,
+            FOREIGN KEY(proposal_id) REFERENCES test_proposals(id),
+            FOREIGN KEY(scan_id) REFERENCES scans(id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_test_runs_proposal ON test_runs(proposal_id, requested_at)",
+    )),
 )
 LATEST_VERSION = MIGRATIONS[-1].version
 

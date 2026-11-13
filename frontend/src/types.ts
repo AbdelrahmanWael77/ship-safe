@@ -155,6 +155,13 @@ export interface AIReviewFinding {
   recommendation: string;
   confidence: 'low' | 'medium' | 'high';
   related_static_finding_ids: string[];
+  /** Review schema v2 only (absent in v1 reviews). */
+  id?: string;
+  /** Always "suspected": an imported review cannot verify anything. */
+  status?: 'suspected';
+  suggested_validation?: string;
+  /** Text only. ShipSafe never applies it. */
+  proposed_patch?: string | null;
 }
 export interface AIReviewTestIdea {
   title: string;
@@ -168,7 +175,16 @@ export interface AIReview {
   source: 'user_imported_json_unverified_provenance';
   verification_status: 'not_independently_verified';
   tests_executed: false;
-  schema_version: 'shipsafe.ai-review.v1';
+  schema_version: 'shipsafe.ai-review.v1' | 'shipsafe.ai-review.v2';
+  /** v2 only: what the review says it was made for (checked against the scan on import). */
+  reviewed_source?: { provider: string | null; repository_id: string | null; pull_request_id: string | null; head_commit: string | null };
+  /** Served beside the review, never stored in it: the binding of the scan the review was made for.
+   *  `stale: true` means the pull request has new commits since, so the review is outdated. */
+  scan_binding?: Binding;
+  /** History route only: whether the review belongs to the scan that was asked about. */
+  current_scan?: boolean;
+  /** v2 only: what the reviewer could not see. */
+  missing_context?: string[];
   scan_id: string;
   context_digest: string;
   summary: string;
@@ -176,4 +192,118 @@ export interface AIReview {
   findings: AIReviewFinding[];
   test_ideas: AIReviewTestIdea[];
   limitations: string[];
+}
+
+// -- Phase 4 task A: static test discovery (nothing is executed) -------------
+export type DiscoveryReason =
+  | { kind: 'imports_changed_module'; changed_file: string }
+  | { kind: 'mentions_changed_function'; changed_file: string; function: string };
+export interface TestCandidate {
+  test_id: string;
+  file: string;
+  name: string;
+  line: number;
+  changed_in_this_scan: boolean;
+  reasons: DiscoveryReason[];
+  related_static_finding_ids: string[];
+  related_ai_finding_ids: string[];
+}
+export interface TestDiscovery {
+  scan_id: string;
+  ai_review_id: string | null;
+  commit: string;
+  method: 'static-ast';
+  /** Always false: discovery never runs anything. */
+  executed: false;
+  test_files_found: number;
+  test_files_read: number;
+  test_files_unread: number;
+  unparsed_test_files: string[];
+  tests_found: number;
+  candidate_count: number;
+  candidates: TestCandidate[];
+  coverage_gaps: { changed_file: string; reason: string; static_finding_ids: string[]; ai_finding_ids: string[] }[];
+  incomplete: boolean;
+  heuristics: string[];
+  disclaimer: string;
+}
+
+// -- Phase 4 task B: proposed tests and human decisions (never applied or run here)
+export interface TestProposalDecision {
+  id: string;
+  decision: 'approved' | 'rejected';
+  decided_at: string;
+  /** Self-declared name: ShipSafe has no authentication. */
+  decided_by: string;
+  note: string | null;
+}
+export interface TestProposal {
+  id: string;
+  scan_id: string;
+  created_at: string;
+  target_path: string;
+  /** Untrusted test source. Render as text only. */
+  content: string;
+  content_digest: string;
+  origin: 'human' | 'imported_ai_review';
+  finding_ref: string | null;
+  rationale: string | null;
+  base_commit: string;
+  head_commit: string;
+  decisions: TestProposalDecision[];
+  status: 'pending' | 'approved' | 'rejected';
+  /** The scan's pull request has new commits. */
+  stale: boolean;
+  /** Approved and not stale. Says the human gate is passed, not that anything ran. */
+  eligible_to_run: boolean;
+  applied: false;
+  executed: false;
+  identity_note: string;
+}
+
+// -- Phase 4 task C: run requests. This build executes nothing, so every run is "blocked".
+export interface TestRun {
+  id: string;
+  proposal_id: string;
+  scan_id: string;
+  requested_at: string;
+  requested_by: string;
+  status: string;
+  reason: string | null;
+  runner: string;
+  base_commit: string;
+  head_commit: string;
+  /** All null when nothing ran. */
+  started_at: string | null;
+  finished_at: string | null;
+  exit_code: number | null;
+  output: string | null;
+  executed: boolean;
+}
+
+// -- Phase 5: evidence-based release assessment (arranges stored evidence; never says "safe")
+export type AssessmentState = 'assessment_unavailable' | 'stale' | 'confirmed_regression' | 'tests_incomplete' | 'review_required';
+interface AssessedFinding { id?: string | null; severity: string; category: string; title: string; file: string; line: number | null; confidence?: string }
+export interface ReleaseAssessment {
+  scan_id: string;
+  generated_at: string;
+  state: AssessmentState;
+  state_label: string;
+  states: AssessmentState[];
+  statement: string;
+  identity: {
+    repo_name: string; provider: string; repository_id: string | null; pull_request_id: string | null;
+    base_ref: string; head_ref: string; base_commit: string | null; head_commit: string | null;
+    comparison: string; scanned_at: string; stale: boolean; stale_at: string | null;
+  };
+  static: { label: string; finding_count: number; by_severity: Record<string, number>; risk_score: number; recommendation: string; files_changed: number; findings: (AssessedFinding & { id: string })[] };
+  ai_reviews: { label: string; count: number; latest: null | { id: string; imported_at: string; schema_version: string; recommendation: string; finding_count: number; findings: AssessedFinding[] } };
+  tests: {
+    label: string;
+    repository_test_status: string;
+    proposals: { count: number; by_status: { pending: number; approved: number; rejected: number };
+      items: { id: string; target_path: string; status: string; finding_ref: string | null; origin: string; decisions: { decision: string; decided_by: string; decided_at: string; note: string | null }[] }[] };
+    runs: { requested: number; blocked: number; executed: number; confirmed_regressions: number; items: Partial<TestRun>[] };
+  };
+  unknowns: string[];
 }

@@ -225,7 +225,7 @@ def test_pull_request_scan_end_to_end_is_bound_to_merge_base_and_head(make_clien
     }]
 
 
-def test_binding_is_served_beside_the_report_and_never_enters_the_stored_report_or_handoff(make_client, tmp_path):
+def test_binding_is_served_beside_the_report_and_never_enters_the_stored_report(make_client, tmp_path):
     client = make_client(bitbucket())
     report = client.post(f"{PR_URL}/scans").json()
     conn = sqlite3.connect(tmp_path / "scans.db")
@@ -233,9 +233,96 @@ def test_binding_is_served_beside_the_report_and_never_enters_the_stored_report_
     conn.close()
     assert "binding" not in stored and "stale_checked" not in json.dumps(stored)
     assert stored == {key: value for key, value in report.items() if key != "binding"}
-    assert client.get(f"/api/scans/{report['id']}/ai/context").json()["context_digest"] == context_digest(stored)
-    archive = zipfile.ZipFile(io.BytesIO(client.get(f"/api/scans/{report['id']}/ai/handoff").content))
-    assert all(b'"binding"' not in archive.read(name) for name in archive.namelist())
+
+
+# -- Phase 3 task 1: the Claude review package of a pull request scan ---------
+
+def review_package(client, scan_id):
+    response = client.get(f"/api/scans/{scan_id}/ai/handoff", params={"acknowledge_source_sharing": "true"})
+    assert response.status_code == 200, response.text
+    archive = zipfile.ZipFile(io.BytesIO(response.content))
+    return {name: archive.read(name).decode() for name in archive.namelist()}
+
+
+def test_pull_request_package_needs_an_acknowledgement_before_source_code_is_exported(make_client):
+    client = make_client(bitbucket())
+    report = client.post(f"{PR_URL}/scans").json()
+    refused = client.get(f"/api/scans/{report['id']}/ai/handoff")
+    assert refused.status_code == 428
+    assert "acknowledge_source_sharing" in refused.json()["detail"]
+    assert client.get(f"/api/scans/{report['id']}/ai/context").json()["acknowledgement_required"] is True
+    assert set(review_package(client, report["id"])) == {
+        "PACKAGE.json", "REVIEW_INSTRUCTIONS.md", "review-input.json", "response-template.json"}
+
+
+def test_pull_request_package_carries_repository_pull_request_and_exact_commits_under_the_digest(make_client, tmp_path):
+    client = make_client(bitbucket())
+    report = client.post(f"{PR_URL}/scans").json()
+    binding = report["binding"]
+    identity = {key: binding[key] for key in (
+        "provider", "repository_id", "pull_request_id", "base_commit", "head_commit", "comparison")}
+    assert identity["pull_request_id"] == "7" and len(identity["head_commit"]) == 40 and len(identity["base_commit"]) == 40
+
+    files = review_package(client, report["id"])
+    payload = json.loads(files["review-input.json"])
+    manifest = json.loads(files["PACKAGE.json"])
+    assert payload["review_context"]["source"] == identity
+    assert manifest["source"] == identity and manifest["scan_id"] == report["id"]
+    assert manifest["package_format"] == "shipsafe.review-package.v2"
+    assert manifest["context_digest"] == payload["context_digest"]
+    assert identity["head_commit"] in files["REVIEW_INSTRUCTIONS.md"] and "acme/ledger" in files["REVIEW_INSTRUCTIONS.md"]
+    # Stale state changes over time, so it is not part of the package or its digest.
+    assert all("stale" not in text for name, text in files.items() if name != "REVIEW_INSTRUCTIONS.md")
+
+    stored = {key: value for key, value in report.items() if key != "binding"}
+    assert payload["context_digest"] == context_digest(stored, binding)
+    assert payload["context_digest"] != context_digest(stored, {**binding, "head_commit": "f" * 40})
+    assert payload["context_digest"] != context_digest(stored)  # the identity is covered by the digest
+    assert client.get(f"/api/scans/{report['id']}/ai/context").json()["context_digest"] == payload["context_digest"]
+    # A second export has a new package id and the same content digest.
+    again = json.loads(review_package(client, report["id"])["PACKAGE.json"])
+    assert again["package_id"] != manifest["package_id"] and again["context_digest"] == manifest["context_digest"]
+
+
+def test_pull_request_review_round_trip_and_the_digest_survives_the_head_moving(make_client):
+    fake = bitbucket()
+    client = make_client(fake)
+    report = client.post(f"{PR_URL}/scans").json()
+    payload = json.loads(review_package(client, report["id"])["review-input.json"])
+    review = {
+        "schema_version": "shipsafe.ai-review.v1", "scan_id": report["id"], "context_digest": payload["context_digest"],
+        "summary": "Synthetic fixture review of the mocked pull request; nothing was executed.",
+        "recommendation": "manual_review", "findings": [], "test_ideas": [],
+        "limitations": ["Synthetic JSON fixture, not produced by a Claude Code session."],
+    }
+    url = f"/api/scans/{report['id']}/ai/reviews"
+    wrong = client.post(url, json={**review, "context_digest": context_digest(
+        {key: value for key, value in report.items() if key != "binding"})})
+    assert wrong.status_code == 409  # a digest that does not cover the pull request identity is refused
+    saved = client.post(url, json=review)
+    assert saved.status_code == 201, saved.text
+    assert saved.json()["verification_status"] == "not_independently_verified"
+    assert client.get(f"/api/scans/{report['id']}").json()["findings"] == report["findings"]
+
+
+def test_pull_request_v2_review_must_echo_the_pull_request_and_head_commit(make_client):
+    client = make_client(bitbucket())
+    report = client.post(f"{PR_URL}/scans").json()
+    template = json.loads(review_package(client, report["id"])["response-template.json"])
+    binding = report["binding"]
+    assert template["schema_version"] == "shipsafe.ai-review.v2"
+    assert template["reviewed_source"] == {"provider": "bitbucket-cloud", "repository_id": "acme/ledger",
+                                  "pull_request_id": "7", "head_commit": binding["head_commit"]}
+    review = {**template, "summary": "Synthetic fixture review of the mocked pull request; nothing was executed.",
+              "findings": [], "test_ideas": [], "missing_context": ["The full files were not included."]}
+    url = f"/api/scans/{report['id']}/ai/reviews"
+    for field, value in (("head_commit", "f" * 40), ("pull_request_id", "8"), ("repository_id", "acme/other")):
+        wrong = client.post(url, json={**review, "reviewed_source": {**review["reviewed_source"], field: value}})
+        assert wrong.status_code == 409 and "does not match this scan" in wrong.json()["detail"], field
+    saved = client.post(url, json=review)
+    assert saved.status_code == 201, saved.text
+    assert saved.json()["reviewed_source"] == template["reviewed_source"] and saved.json()["tests_executed"] is False
+    assert saved.json()["source"] == "user_imported_json_unverified_provenance"
 
 
 def test_local_scan_responses_carry_a_direct_binding_with_full_shas(make_client, no_bitbucket_env):
@@ -259,6 +346,83 @@ def test_expected_head_guard_refuses_a_scan_after_the_pull_request_moved(make_cl
 
 
 # -- stale detection ---------------------------------------------------------
+
+def test_a_review_goes_stale_with_its_scan_when_the_head_moves_and_history_spans_the_pull_requests_scans(make_client):
+    """Phase 3 task 3: a new pull request head makes the earlier Claude review stale, not current."""
+    fake = bitbucket()
+    client = make_client(fake)
+
+    def import_review(scan):
+        template = json.loads(review_package(client, scan["id"])["response-template.json"])
+        body = {**template, "summary": "Synthetic fixture review of the mocked pull request; nothing was executed.",
+                "findings": [], "test_ideas": [], "missing_context": []}
+        saved = client.post(f"/api/scans/{scan['id']}/ai/reviews", json=body)
+        assert saved.status_code == 201, saved.text
+        return body, saved.json()
+
+    first = client.post(f"{PR_URL}/scans").json()
+    first_body, first_review = import_review(first)
+    assert first_review["scan_binding"]["stale"] is False and first_review["scan_binding"]["head_commit"] == HEAD
+
+    move_head(fake, HEAD2)
+    client.get(PR_URL)  # looking at the pull request records that its head moved
+    served = client.get(f"/api/scans/{first['id']}/ai/reviews").json()[0]
+    assert served["id"] == first_review["id"] and served["imported_at"] == first_review["imported_at"]
+    assert served["scan_binding"]["stale"] is True and served["scan_binding"]["stale_at"] is not None
+    assert served["scan_binding"]["stale_checked"] is False  # recorded state; this route did not ask Bitbucket
+    assert served["reviewed_source"]["head_commit"] == HEAD   # the review still says which commit it was made for
+
+    second = client.post(f"{PR_URL}/scans").json()
+    assert second["binding"]["head_commit"] == HEAD2
+    # The old review is not valid for the new scan: other scan id, other digest, other head commit.
+    assert client.post(f"/api/scans/{second['id']}/ai/reviews", json=first_body).status_code == 409
+    assert client.post(f"/api/scans/{second['id']}/ai/reviews", json={
+        **first_body, "scan_id": second["id"],
+        "context_digest": client.get(f"/api/scans/{second['id']}/ai/context").json()["context_digest"],
+    }).status_code == 409
+    assert client.get(f"/api/scans/{second['id']}/ai/reviews").json() == []
+    _, second_review = import_review(second)
+
+    history = client.get(f"/api/scans/{second['id']}/ai/reviews/history").json()
+    assert [(item["id"], item["scan_id"], item["current_scan"], item["scan_binding"]["stale"]) for item in history] == [
+        (second_review["id"], second["id"], True, False),
+        (first_review["id"], first["id"], False, True),
+    ]
+    from_first = client.get(f"/api/scans/{first['id']}/ai/reviews/history").json()
+    assert [(item["id"], item["current_scan"]) for item in from_first] == [(second_review["id"], False), (first_review["id"], True)]
+    # Static results of both scans are untouched by the imports.
+    assert client.get(f"/api/scans/{first['id']}").json()["findings"] == first["findings"]
+    assert client.get(f"/api/scans/{second['id']}").json()["findings"] == second["findings"]
+
+
+def test_test_discovery_for_a_pull_request_scan_reads_only_test_files_at_the_scanned_head(make_client, monkeypatch):
+    """Phase 4 task A over Bitbucket: read-only, bounded, bound to the scan's head commit."""
+    fake = bitbucket()
+    client = make_client(fake)
+    report = client.post(f"{PR_URL}/scans").json()
+    before = len(fake.paths())
+    found = client.get(f"/api/scans/{report['id']}/tests/discovery")
+    assert found.status_code == 200, found.text
+    body = found.json()
+    assert body["commit"] == report["binding"]["head_commit"] == HEAD and body["executed"] is False
+    assert body["test_files_read"] <= main_module.BITBUCKET_TEST_READS
+    requested = fake.paths()[before:]
+    assert requested and all(HEAD in path for path in requested if "/src/" in path)  # never another commit
+    read = [path.split(f"/src/{HEAD}/", 1)[1] for path in requested if f"/src/{HEAD}/" in path and not path.endswith(f"/src/{HEAD}/")]
+    assert all(path.rsplit("/", 1)[-1].startswith("test_") or path.endswith("_test.py") or path.endswith("/") for path in read)
+    assert {gap["changed_file"] for gap in body["coverage_gaps"]} | {
+        reason["changed_file"] for item in body["candidates"] for reason in item["reasons"]
+    } <= {item["path"] for item in report["files"]}
+
+
+def test_test_discovery_needs_bitbucket_for_a_pull_request_scan(make_client, tmp_path, no_bitbucket_env):
+    client = make_client(bitbucket())
+    report = client.post(f"{PR_URL}/scans").json()
+    without = TestClient(create_app(demo_root=tmp_path / "demo", db_file=tmp_path / "scans.db"), base_url="http://127.0.0.1")
+    with without:
+        refused = without.get(f"/api/scans/{report['id']}/tests/discovery")
+    assert refused.status_code == 503 and refused.json()["code"] == "bitbucket_not_configured"
+
 
 def test_scan_goes_stale_when_the_head_moves_and_fresh_again_if_it_returns(make_client, tmp_path):
     fake = bitbucket()
@@ -392,8 +556,7 @@ def test_import_analysis_is_bounded_and_the_report_says_when_it_was_cut(make_cli
     assert report["summary"]["import_files_skipped"] == 3
     assert [module["path"] for module in report["affected_modules"]] == ["app/mod0.py", "app/mod1.py"]
     assert [path for path in fake.paths() if "/app/mod" in path] == [f"{REPO}/src/{HEAD}/app/mod0.py", f"{REPO}/src/{HEAD}/app/mod1.py"]
-    archive = zipfile.ZipFile(io.BytesIO(client.get(f"/api/scans/{report['id']}/ai/handoff").content))
-    limitations = json.loads(archive.read("review-input.json"))["review_context"]["limitations"]
+    limitations = json.loads(review_package(client, report["id"])["review-input.json"])["review_context"]["limitations"]
     assert any(item.startswith("INCOMPLETE: affected_modules") and "3 Python files" in item for item in limitations)
 
 

@@ -14,9 +14,16 @@ from fastapi.responses import JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, ValidationError
 
-from .ai_handoff import AIReviewImport, MAX_IMPORT_BYTES, context_digest, handoff_zip, saved_review, validate_review_binding
+from .ai_handoff import MAX_IMPORT_BYTES, parse_review, review_content_digest, context_digest, handoff_zip, saved_review, validate_review_binding
 from .config import load_settings
 from .db import BINDING_COLUMNS, binding, insert_scan, migrate, pull_request_scans, scanned_pull_requests, session, sync_stale
+from .assessment import assess, render_markdown
+from .discovery import discover_tests
+from .runner import EXECUTION_UNAVAILABLE, Runner, UnavailableRunner, blocked_reason, record_blocked_run, runs_of
+from .proposals import (
+    MAX_REQUEST_BYTES as MAX_PROPOSAL_REQUEST_BYTES, PROPOSAL_COLUMNS, DecisionRequest, ProposalError, ProposalRequest,
+    RunRequest, check_against_tree, clean_name, insert_decision, insert_proposal, served as served_proposal, validate_content, validate_target_path,
+)
 from .demo_seed import DEMO_BRANCHES, ensure_demo_repo
 from .errors import (
     ChangeTooLarge, ProviderAuthError, ProviderError, ProviderUnavailable, PullRequestNotFound, RefNotFound,
@@ -34,6 +41,8 @@ LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 #: Import analysis over Bitbucket costs one request per file, so it is bounded.
 #: A report cut by this bound says so in its summary.
 BITBUCKET_IMPORT_READS = 200
+# Test files read from Bitbucket for one test discovery (one request each).
+BITBUCKET_TEST_READS = 60
 #: Listing pull requests refreshes the stale marker of those that already
 #: have scans; each refresh is one or more Bitbucket requests, so it is bounded.
 STALE_CHECKS_PER_LIST = 20
@@ -95,6 +104,7 @@ def create_app(
     db_file: Path | None = None,
     allowed_root: Path | None = None,
     bitbucket: BitbucketCloudProvider | None = None,
+    runner: Runner | None = None,
 ) -> FastAPI:
     """``bitbucket`` overrides the provider built from settings (tests pass one
     with a mocked transport)."""
@@ -122,6 +132,9 @@ def create_app(
 
     app = FastAPI(title="ShipSafe API", version="0.2.0", lifespan=lifespan)
     app.state.bitbucket = bitbucket
+    # The test-runner boundary (Phase 4). The default, and the only runner this build
+    # ships, reports that execution is unavailable. ``runner=`` is a test seam.
+    runner = runner or UnavailableRunner()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -212,20 +225,46 @@ def create_app(
             headers={"Content-Disposition": f'attachment; filename="shipsafe-{scan_id[:8]}.json"'},
         )
 
+    def review_inputs(scan_id: str) -> tuple[dict, dict]:
+        """The stored report and its binding: what the Claude package and its
+        digest are built from. The binding supplies identity and exact commits."""
+        scan = read_scan(scan_id)
+        source = scan.pop("binding")
+        return scan, source
+
+    def needs_acknowledgement(report: dict, source: dict) -> bool:
+        """True unless the scan is of the synthetic demo repository. Exporting
+        any other code requires the person to confirm they may share it."""
+        if source.get("provider") != "local-git":
+            return True
+        try:
+            return Path(report.get("repository_path") or "").resolve() != Path(demo_root).resolve()
+        except OSError:
+            return True
+
     @app.get("/api/scans/{scan_id}/ai/handoff")
-    def download_ai_handoff(scan_id: str):
-        report = read_report(scan_id)
+    def download_ai_handoff(scan_id: str, acknowledge_source_sharing: bool = False):
+        report, source = review_inputs(scan_id)
+        if needs_acknowledgement(report, source) and not acknowledge_source_sharing:
+            raise HTTPException(
+                status_code=428,
+                detail="This package contains source code that is not the synthetic demo. Confirm that you are "
+                       "allowed to share it with Claude Code (acknowledge_source_sharing=true) to export it.",
+            )
         filename = f"shipsafe-handoff-{scan_id[:8]}.zip"
         return Response(
-            content=handoff_zip(report),
+            content=handoff_zip(report, source),
             media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
         )
 
     @app.get("/api/scans/{scan_id}/ai/context")
     def get_ai_context(scan_id: str):
-        report = read_report(scan_id)
-        return {"scan_id": scan_id, "context_digest": context_digest(report), "review_count": count_reviews(scan_id)}
+        report, source = review_inputs(scan_id)
+        return {
+            "scan_id": scan_id, "context_digest": context_digest(report, source), "review_count": count_reviews(scan_id),
+            "acknowledgement_required": needs_acknowledgement(report, source),
+        }
 
     def count_reviews(scan_id: str) -> int:
         with connection() as conn:
@@ -233,7 +272,7 @@ def create_app(
 
     @app.post("/api/scans/{scan_id}/ai/reviews", status_code=201)
     async def import_ai_review(scan_id: str, request: Request):
-        report = read_report(scan_id)
+        report, source = review_inputs(scan_id)
         length = request.headers.get("content-length")
         if length and length.isdigit() and int(length) > MAX_IMPORT_BYTES:
             raise HTTPException(413, detail="Review JSON is larger than the 256 KiB import limit")
@@ -246,30 +285,263 @@ def create_app(
             parts.append(part)
         try:
             data = json.loads(b"".join(parts))
-            validated = AIReviewImport.model_validate(data)
+            validated = parse_review(data)
         except (ValueError, ValidationError, RecursionError) as exc:
             raise HTTPException(422, detail=f"Invalid Claude review JSON: {str(exc)[:700]}") from exc
         try:
-            validate_review_binding(validated, report)
+            validate_review_binding(validated, report, source)
         except ValueError as exc:
             raise HTTPException(409, detail=str(exc)) from exc
         review = saved_review(validated)
+        digest = review_content_digest(review)
         with connection() as conn:
+            # Same connection as the insert, so two identical imports cannot both pass the check.
+            existing = conn.execute("SELECT review_json FROM ai_reviews WHERE scan_id = ?", (scan_id,)).fetchall()
+            if any(review_content_digest(json.loads(row["review_json"])) == digest for row in existing):
+                raise HTTPException(409, detail="This review was already imported for this scan. Nothing was added.")
             conn.execute(
                 "INSERT INTO ai_reviews (id, scan_id, imported_at, review_json) VALUES (?, ?, ?, ?)",
                 (review["id"], scan_id, review["imported_at"], json.dumps(review)),
             )
-        return review
+        return served_review(review, scan_id, source)
+
+    def served_review(review: dict, scan_id: str, scan_binding: dict) -> dict:
+        """A stored review plus the scan it belongs to and that scan's binding.
+
+        ``scan_binding.stale`` is how a review becomes stale: a review is only
+        as current as the scan it was made for, and the scan is marked when the
+        pull request's head moves. Nothing is written into the stored review.
+        """
+        return {**review, "scan_id": scan_id, "scan_binding": scan_binding}
 
     @app.get("/api/scans/{scan_id}/ai/reviews")
     def list_ai_reviews(scan_id: str):
-        read_report(scan_id)
+        scan_binding = read_scan(scan_id)["binding"]
         with connection() as conn:
             rows = conn.execute(
                 "SELECT review_json FROM ai_reviews WHERE scan_id = ? ORDER BY imported_at DESC, rowid DESC LIMIT 25",
                 (scan_id,),
             ).fetchall()
-        return [json.loads(row["review_json"]) for row in rows]
+        return [served_review(json.loads(row["review_json"]), scan_id, scan_binding) for row in rows]
+
+    @app.get("/api/scans/{scan_id}/ai/reviews/history")
+    def ai_review_history(scan_id: str):
+        """Reviews of this scan and, for a pull request scan, of every other
+        stored scan of the same pull request, newest first. Each carries its
+        own scan's binding, so a review of an outdated head shows as stale."""
+        scan_binding = read_scan(scan_id)["binding"]
+        if scan_binding["pull_request_id"] is None:
+            return [{**review, "current_scan": True} for review in list_ai_reviews(scan_id)]
+        with connection() as conn:
+            rows = conn.execute(
+                f"SELECT r.review_json, s.id AS review_scan_id, {', '.join('s.' + c.strip() for c in BINDING_COLUMNS.split(','))}"
+                " FROM ai_reviews r JOIN scans s ON s.id = r.scan_id"
+                " WHERE s.provider = ? AND s.repository_id = ? AND s.pull_request_id = ?"
+                " ORDER BY r.imported_at DESC, r.rowid DESC LIMIT 50",
+                (scan_binding["provider"], scan_binding["repository_id"], scan_binding["pull_request_id"]),
+            ).fetchall()
+        return [
+            {**served_review(json.loads(row["review_json"]), row["review_scan_id"], binding(row)),
+             "current_scan": row["review_scan_id"] == scan_id}
+            for row in rows
+        ]
+
+    @app.get("/api/scans/{scan_id}/tests/discovery")
+    def discover_scan_tests(scan_id: str):
+        """Existing tests that may exercise this scan's change (Phase 4 task A).
+
+        Static: test files are read at the scan's head commit and parsed, never
+        imported or run. Read-only towards the repository and Bitbucket.
+        """
+        report, source = review_inputs(scan_id)
+        commit = source.get("head_commit")
+        if not commit:
+            raise HTTPException(409, detail="This scan is not bound to a commit, so tests cannot be discovered for it. Scan again.")
+        reviews = list_ai_reviews(scan_id)
+        ai_findings = reviews[0]["findings"] if reviews else []
+        if source["provider"] == "local-git":
+            try:
+                repository = provider.get_repository(report["repository_path"])
+                discovery = discover_tests(provider, repository, commit, report, ai_findings=ai_findings)
+            except RepositoryAccessDenied as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            except ScanError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        else:
+            remote = require_bitbucket()
+            with bitbucket_errors():
+                repository = remote.get_repository(source["repository_id"])
+                discovery = discover_tests(
+                    remote, repository, commit, report, ai_findings=ai_findings, max_files=BITBUCKET_TEST_READS)
+        return {"scan_id": scan_id, "ai_review_id": reviews[0]["id"] if reviews else None, **discovery}
+
+    # -- Phase 4 task B: proposed tests and human decisions (nothing is applied or run) --
+
+    def scan_tree(report: dict, source: dict) -> list[str]:
+        """Paths in the repository at the scan's head commit (read-only)."""
+        if source["provider"] == "local-git":
+            try:
+                repository = provider.get_repository(report["repository_path"])
+                return provider.list_files(repository, source["head_commit"])
+            except RepositoryAccessDenied as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            except ScanError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        remote = require_bitbucket()
+        with bitbucket_errors():
+            return remote.list_files(remote.get_repository(source["repository_id"]), source["head_commit"])
+
+    async def limited_json(request: Request, limit: int) -> object:
+        received, parts = 0, []
+        async for part in request.stream():
+            received += len(part)
+            if received > limit:
+                raise HTTPException(413, detail=f"Request is larger than the {limit // 1024} KiB limit")
+            parts.append(part)
+        try:
+            return json.loads(b"".join(parts))
+        except (ValueError, RecursionError) as exc:
+            raise HTTPException(422, detail=f"Invalid JSON: {str(exc)[:300]}") from exc
+
+    def proposal_rows(conn, scan_id: str, proposal_id: str | None = None):
+        sql = f"SELECT {PROPOSAL_COLUMNS} FROM test_proposals WHERE scan_id = ?"
+        args: tuple = (scan_id,)
+        if proposal_id is not None:
+            sql, args = sql + " AND id = ?", (scan_id, proposal_id)
+        return conn.execute(sql + " ORDER BY created_at DESC, rowid DESC LIMIT 100", args).fetchall()
+
+    @app.get("/api/scans/{scan_id}/tests/proposals")
+    def list_test_proposals(scan_id: str):
+        stale = read_scan(scan_id)["binding"]["stale"]
+        with connection() as conn:
+            return [served_proposal(conn, row, scan_stale=stale) for row in proposal_rows(conn, scan_id)]
+
+    @app.post("/api/scans/{scan_id}/tests/proposals", status_code=201)
+    async def create_test_proposal(scan_id: str, request: Request):
+        report, source = review_inputs(scan_id)
+        if not source.get("head_commit") or not source.get("base_commit"):
+            raise HTTPException(409, detail="This scan is not bound to exact commits, so a test cannot be proposed for it. Scan again.")
+        if source["stale"]:
+            raise HTTPException(409, detail="The pull request has new commits since this scan. Scan again and propose the test for the new scan.")
+        data = await limited_json(request, MAX_PROPOSAL_REQUEST_BYTES)
+        try:
+            body = ProposalRequest.model_validate(data)
+            validate_target_path(body.target_path)
+            validate_content(body.content)
+        except ValidationError as exc:
+            raise HTTPException(422, detail=f"Invalid test proposal: {str(exc)[:700]}") from exc
+        except ProposalError as exc:
+            raise HTTPException(exc.status, detail=str(exc)) from exc
+        if body.finding_ref is not None:
+            known = {item["id"] for item in report["findings"]}
+            known |= {str(f["id"]) for review in list_ai_reviews(scan_id) for f in review["findings"] if f.get("id")}
+            if body.finding_ref not in known:
+                raise HTTPException(409, detail=f"Unknown finding for this scan: {body.finding_ref}")
+        tree = scan_tree(report, source)
+        try:
+            check_against_tree(body.target_path, tree)
+            with connection() as conn:
+                proposal_id = insert_proposal(
+                    conn, scan_id=scan_id, request=body, base_commit=source["base_commit"], head_commit=source["head_commit"])
+                return served_proposal(conn, proposal_rows(conn, scan_id, proposal_id)[0], scan_stale=False)
+        except ProposalError as exc:
+            raise HTTPException(exc.status, detail=str(exc)) from exc
+
+    @app.post("/api/scans/{scan_id}/tests/proposals/{proposal_id}/decisions", status_code=201)
+    async def decide_test_proposal(scan_id: str, proposal_id: str, request: Request):
+        """Record an explicit human decision. Approving does not apply or run anything."""
+        stale = read_scan(scan_id)["binding"]["stale"]
+        data = await limited_json(request, 16 * 1024)
+        try:
+            body = DecisionRequest.model_validate(data)
+        except ValidationError as exc:
+            raise HTTPException(422, detail=f"Invalid decision: {str(exc)[:700]}") from exc
+        with connection() as conn:
+            rows = proposal_rows(conn, scan_id, proposal_id)
+            if not rows:
+                raise HTTPException(404, detail="Test proposal not found for this scan")
+            if stale and body.decision == "approved":
+                raise HTTPException(409, detail="This proposal is stale: the pull request has new commits since its scan. It can be rejected, not approved.")
+            try:
+                insert_decision(conn, proposal_id=proposal_id, request=body)
+            except ProposalError as exc:
+                raise HTTPException(exc.status, detail=str(exc)) from exc
+            return served_proposal(conn, rows[0], scan_stale=stale)
+
+    # -- Phase 4 task C: runner boundary. No test is executed by this build. --
+
+    @app.get("/api/tests/runner")
+    def test_runner_status():
+        """Whether isolated test execution is available. In this build it never is."""
+        answer, reason = blocked_reason(runner)
+        return {**answer, "available": False, "status": EXECUTION_UNAVAILABLE, "reason": reason}
+
+    @app.get("/api/scans/{scan_id}/tests/proposals/{proposal_id}/runs")
+    def list_test_runs(scan_id: str, proposal_id: str):
+        read_scan(scan_id)
+        with connection() as conn:
+            if not proposal_rows(conn, scan_id, proposal_id):
+                raise HTTPException(404, detail="Test proposal not found for this scan")
+            return runs_of(conn, proposal_id)
+
+    @app.post("/api/scans/{scan_id}/tests/proposals/{proposal_id}/runs")
+    async def request_test_run(scan_id: str, proposal_id: str, request: Request):
+        """Ask for an approved proposal to be run. Every check that can refuse comes
+        before the runner; the runner then refuses too, and the request is recorded
+        as BLOCKED. Nothing is executed and no result is invented."""
+        report, source = review_inputs(scan_id)
+        data = await limited_json(request, 16 * 1024)
+        try:
+            body = RunRequest.model_validate(data)
+            requested_by = clean_name(body.requested_by)
+        except ValidationError as exc:
+            raise HTTPException(422, detail=f"Invalid run request: {str(exc)[:700]}") from exc
+        except ProposalError as exc:
+            raise HTTPException(exc.status, detail=str(exc).replace("decided_by", "requested_by")) from exc
+        with connection() as conn:
+            rows = proposal_rows(conn, scan_id, proposal_id)
+            if not rows:
+                raise HTTPException(404, detail="Test proposal not found for this scan")
+            proposal = served_proposal(conn, rows[0], scan_stale=source["stale"])
+        if not proposal["eligible_to_run"]:
+            why = ("it is stale: the pull request has new commits since its scan" if proposal["stale"]
+                   else f"its status is '{proposal['status']}', not 'approved'")
+            raise HTTPException(409, detail=f"This proposal cannot be run because {why}.")
+        if needs_acknowledgement(report, source):
+            raise HTTPException(403, detail="Tests can only be requested for the synthetic demo repository. "
+                                            "Running tests of any other repository is not permitted.")
+        answer, reason = blocked_reason(runner)
+        with connection() as conn:
+            run_id = record_blocked_run(
+                conn, proposal_id=proposal_id, scan_id=scan_id, requested_by=requested_by, reason=reason,
+                runner_name=str(answer.get("runner") or "unknown"),
+                base_commit=proposal["base_commit"], head_commit=proposal["head_commit"])
+            run = next(item for item in runs_of(conn, proposal_id) if item["id"] == run_id)
+        return JSONResponse(status_code=503, content={"detail": reason, "code": EXECUTION_UNAVAILABLE, "run": run})
+
+    # -- Phase 5: evidence-based release assessment (read-only; adds nothing to the evidence) --
+
+    def build_assessment(scan_id: str) -> dict:
+        report, source = review_inputs(scan_id)
+        reviews = list_ai_reviews(scan_id)
+        proposals = list_test_proposals(scan_id)
+        with connection() as conn:
+            for proposal in proposals:
+                proposal["runs"] = runs_of(conn, proposal["id"])
+        return assess(report, source, reviews, proposals)
+
+    @app.get("/api/scans/{scan_id}/assessment")
+    def release_assessment(scan_id: str):
+        return build_assessment(scan_id)
+
+    @app.get("/api/scans/{scan_id}/assessment/report")
+    def release_assessment_report(scan_id: str):
+        """The same assessment as a readable Markdown file."""
+        return Response(
+            content=render_markdown(build_assessment(scan_id)), media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="shipsafe-assessment-{scan_id[:8]}.md"',
+                     "Cache-Control": "no-store"},
+        )
 
     @app.get("/api/scans/{scan_id}/ai/reviews/latest")
     def latest_ai_review(scan_id: str):

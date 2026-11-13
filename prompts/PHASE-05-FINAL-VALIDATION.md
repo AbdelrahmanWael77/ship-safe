@@ -51,14 +51,14 @@ Verified, read-only Bitbucket PR webhooks and queue may be considered **only if*
 - Lead: scope freeze, integration/test gate, factual verdict, final merge.
 
 ## Final acceptance gates
-- [ ] Full manual code-review pipeline works with real data from synthetic fixture.
-- [ ] Bitbucket read-only integration is implemented and has verified or clearly unverified live access.
-- [ ] AI findings vs actual tests distinguished and commit-bound.
-- [ ] Tests run in valid sandbox or are BLOCKED with transparent limitation.
-- [ ] No fabricated evidence or credentials in exports.
-- [ ] Backend + frontend verification commands/results recorded.
-- [ ] Security limitations, business value, hidden-test findings documented.
-- [ ] Demo verified; final source checkpoint reviewed by human teammates.
+- [ ] Full manual code-review pipeline works with real data from synthetic fixture. *(PARTIAL, 2026-11-13: every step passes automated tests on the synthetic fixture, but the human step — a review written in a real Claude Code session — was never performed; only synthetic JSON was imported.)*
+- [x] Bitbucket read-only integration is implemented and has verified or clearly unverified live access. *(Implemented; live access is **unverified** and stated as such everywhere. Mocked HTTP only.)*
+- [x] AI findings vs actual tests distinguished and commit-bound. *(`test_assessment.py`, `ReleaseAssessmentPanel.test.tsx`; there are no executed tests to show.)*
+- [x] Tests run in valid sandbox or are BLOCKED with transparent limitation. *(**BLOCKED**: no isolated runner; every run request is recorded as blocked. `test_runner.py`.)*
+- [x] No fabricated evidence or credentials in exports. *(Blocked runs carry no output or result; assessment figures come from stored rows; secret-pattern search of tracked files found only synthetic test inputs. `docs/SECURITY_ASSESSMENT.md`.)*
+- [x] Backend + frontend verification commands/results recorded. *(`docs/IMPLEMENTATION_STATUS.md`, `docs/ACCEPTANCE_MATRIX.md`, `docs/handoffs/P5-FINAL-SESSION_HANDOFF.md`.)*
+- [ ] Security limitations, business value, hidden-test findings documented. *(PARTIAL: limitations and business value are documented; **no hidden-change test was run**, so there are no findings to document. `docs/STUMP_THE_MODEL_RESULTS.md` says so.)*
+- [ ] Demo verified; final source checkpoint reviewed by human teammates. *(NOT DONE: the demo script was not rehearsed in a browser and no human has reviewed the branches.)*
 
 ## Final handoff
 Update canonical docs, demo script, competition results, and an exact PASS/PARTIAL/BLOCKED/FAIL feature list. Integrator may create tag `shipsafe-v1.0` after human review. **Do not push, deploy or merge without explicit team authorization. Stop and deliver the final evidence-based report.**

@@ -47,11 +47,21 @@ All routes are unauthenticated and intended for loopback use only. CORS allows `
 | `GET /api/scans?limit=1..100` (default 12) | 200 `ScanHistory[]` (each with `binding`), newest first | 422 |
 | `GET /api/scans/{id}` | 200 `Report` + `binding` | 404 |
 | `GET /api/scans/{id}/export` | 200 `Report` + `binding` as attachment | 404 |
-| `GET /api/scans/{id}/ai/handoff` | 200 `application/zip` | 404 |
-| `GET /api/scans/{id}/ai/context` | 200 `{scan_id, context_digest, review_count}` | 404 |
-| `POST /api/scans/{id}/ai/reviews` | 201 saved `AIReview` | 404 · 413 over 256 KiB · 422 malformed or schema-invalid · 409 wrong scan, digest, file, or static finding ID |
-| `GET /api/scans/{id}/ai/reviews` | 200 `AIReview[]`, newest first, max 25 | 404 |
-| `GET /api/scans/{id}/ai/reviews/latest` | 200 `AIReview` or `null` | 404 |
+| `GET /api/scans/{id}/ai/handoff[?acknowledge_source_sharing=true]` | 200 `application/zip` (`PACKAGE.json`, `REVIEW_INSTRUCTIONS.md`, `review-input.json`, `response-template.json`) | 404; 428 when the scan is not the synthetic demo and the acknowledgement is missing |
+| `GET /api/scans/{id}/ai/context` | 200 `{scan_id, context_digest, review_count, acknowledgement_required}` | 404 |
+| `POST /api/scans/{id}/ai/reviews` | 201 saved `AIReview` + `scan_id`, `scan_binding` | 404 · 413 over 256 KiB · 422 malformed or schema-invalid · 409 wrong scan, digest, repository / pull request / head commit (v2), file, static finding ID, duplicate finding ID, or a review already imported for this scan |
+| `GET /api/scans/{id}/ai/reviews` | 200 `AIReview[]` each + `scan_id`, `scan_binding`; newest first, max 25 | 404 |
+| `GET /api/scans/{id}/ai/reviews/latest` | 200 `AIReview` (+ `scan_id`, `scan_binding`) or `null` | 404 |
+| `GET /api/scans/{id}/ai/reviews/history` | 200 reviews of this scan and, for a pull request scan, of every stored scan of the same pull request; each + `scan_id`, `scan_binding`, `current_scan`; newest first, max 50 | 404 |
+| `GET /api/scans/{id}/tests/discovery` | 200 `TestDiscovery`: existing pytest tests that may exercise the change, found by parsing test files at the scan's head commit; `executed` is always `false`; includes `coverage_gaps` and the selection `heuristics`. Nothing is stored or run (Phase 4 task A) | 404 · 409 scan not bound to a commit · 403 / 400 local repository · Bitbucket errors for a pull request scan |
+| `GET /api/scans/{id}/tests/proposals` | 200 `TestProposal[]` for the scan, newest first, each with its `decisions` (oldest first), `status` (`pending` / `approved` / `rejected`), `stale`, `eligible_to_run`, and `applied: false`, `executed: false` | 404 |
+| `POST /api/scans/{id}/tests/proposals` | 201 `TestProposal`. Body `{target_path, content, origin, finding_ref?, rationale?}`. Stored as untrusted text; nothing is written to a repository or run (Phase 4 task B) | 404 · 413 over 64 KiB · 422 unsafe or non-test path, content that is not Python with a pytest test, unknown fields · 409 scan not commit-bound or stale, path exists or passes through a file / symbolic link at the scanned commit, unknown finding, same proposal already stored |
+| `POST /api/scans/{id}/tests/proposals/{pid}/decisions` | 201 `TestProposal`. Body `{decision: approved \| rejected, decided_by, note?}`. Appends a decision; approving applies and runs nothing | 404 · 422 missing or invalid name or decision · 409 approving a stale proposal |
+| `GET /api/tests/runner` | 200 `{available: false, status: "execution_unavailable", runner, reason, checked_at}`. This build has no execution engine, so `available` is always false (Phase 4 task C) | |
+| `GET /api/scans/{id}/tests/proposals/{pid}/runs` | 200 `TestRun[]`, newest first | 404 |
+| `POST /api/scans/{id}/tests/proposals/{pid}/runs` | **Never 2xx in this build.** Body `{requested_by}`. Checks in order: proposal exists (404) → approved and not stale (409) → scan is of the synthetic demo repository (403) → runner. The runner refuses: **503** `{detail, code: "execution_unavailable", run}` and the request is stored as a `blocked` run with no start, end, exit code or output. Nothing is executed and no process is started | 404 · 422 missing or invalid name · 409 · 403 · 503 |
+| `GET /api/scans/{id}/assessment` | 200 `ReleaseAssessment`: stored evidence for the scan arranged by kind (static SUSPECTED, imported AI UNVERIFIED, executed tests), `state` (`assessment_unavailable` · `stale` · `confirmed_regression` · `tests_incomplete` · `review_required`, first that applies; all that apply in `states`), identity with full commits, and `unknowns`. Read-only; never states that a change is safe (Phase 5) | 404 |
+| `GET /api/scans/{id}/assessment/report` | 200 `text/markdown` attachment with the same content | 404 |
 | `GET /api/repository/status` | 200 `{repo, main_sha, branches}` for the demo repository | 500 |
 | `GET /api/bitbucket/status` | 200 `{configured, provider, workspace, repositories}`; never the credential | |
 | `GET /api/bitbucket/repositories` | 200 `BitbucketRepository[]` (approved repositories only) | Bitbucket errors, below |
@@ -62,6 +72,12 @@ All routes are unauthenticated and intended for loopback use only. CORS allows `
 Request body for `POST /api/scans` (`ScanRequest`): `repository_path` (optional, ≤1024 chars; omitted means the demo repository), `base_ref` (default `main`), `head_ref` (default `feature/release-candidate`), each ref 1–150 chars.
 
 Error bodies are `{"detail": string}` except FastAPI request-validation 422s, where `detail` is a list of `{loc, msg, type}` objects. The frontend handles both.
+
+### Claude review package and imports (Phase 3 tasks 1–3; synthetic JSON fixtures only)
+
+`review-input.json` holds `review_context`, which starts with `source` (`provider, repository_id, pull_request_id, base_commit, head_commit, comparison` from the scan's binding, without stale state). `context_digest` is the SHA-256 of the canonical JSON of that context, so it covers the identity and exact commits. Patches and finding evidence are redacted on a best-effort basis (`[REDACTED:kind]`); a context larger than 1 MiB loses its largest patches (`diff_omitted_from_package: true`); both are stated in `limitations`. `PACKAGE.json` repeats the identity and digest and adds a per-export `package_id` (not stored).
+
+Imports accept `shipsafe.ai-review.v1` and `.v2` (shapes: `docs/CLAUDE-CODE-HANDOFF.md`). The same review content cannot be imported twice for one scan (compared by a digest of the review without the fields ShipSafe adds). A stored review is never modified. Every served review carries `scan_binding`, the binding of the scan it was made for, read at response time: when the pull request's head moves, that scan is marked stale and so is every review of it. `stale_checked` is always false on these routes; they never contact Bitbucket. A review made for one scan is refused for any other scan, including a newer scan of the same pull request.
 
 ### Bitbucket routes (Phase 2 task 4; mocked HTTP only, never run against live Bitbucket)
 

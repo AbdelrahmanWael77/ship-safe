@@ -324,7 +324,15 @@ export interface ReleaseAssessment {
     comparison: string; scanned_at: string; stale: boolean; stale_at: string | null;
   };
   static: { label: string; finding_count: number; by_severity: Record<string, number>; risk_score: number; recommendation: string; files_changed: number; findings: (AssessedFinding & { id: string })[] };
-  ai_reviews: { label: string; count: number; latest: null | { id: string; imported_at: string; schema_version: string; recommendation: string; finding_count: number; findings: AssessedFinding[] } };
+  ai_reviews: {
+    label: string; count: number;
+    /** Reviews the API server got from OpenAI or Gemini, and reviews a person imported as JSON. */
+    model_generated: number; manually_imported: number;
+    latest: null | {
+      id: string; imported_at: string; schema_version: string; recommendation: string; finding_count: number; findings: AssessedFinding[];
+      origin: 'model' | 'import'; source: string | null; provider: 'openai' | 'gemini' | null; model: string | null;
+    };
+  };
   tests: {
     label: string;
     repository_test_status: string;

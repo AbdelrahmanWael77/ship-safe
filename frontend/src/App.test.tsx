@@ -640,6 +640,42 @@ describe('AI review results on Risk findings and Test intelligence', () => {
     await go(/Test intelligence/)
     expect(await screen.findByText(/Static rules cover Python files only/)).toBeVisible()
   })
+  test('Overview names who wrote the AI review: an AI model, or a manual Claude Code import', async () => {
+    const model: AIReview = { ...aiReview(), source: 'openai_api_generated_unverified',
+      generator: { provider: 'openai', model: 'gpt-6-luna' } as AIReview['generator'] }
+    await start({ [reviews]: { body: [model] } })
+    const callout = await screen.findByText(/is available \(1 proposed finding, unverified\)/)
+    expect(callout).toHaveTextContent('An AI model review by OpenAI · gpt-6-luna is available')
+    expect(screen.queryByText(/manually imported/)).not.toBeInTheDocument()
+  })
+
+  test('Overview calls an imported review a manual Claude Code import', async () => {
+    await start({ [reviews]: { body: [aiReview()] } })
+    expect(await screen.findByText('A manually imported Claude Code review is available (1 proposed finding, unverified).')).toBeVisible()
+  })
+
+  test('Risk findings always says the static rules read Python files only, so 0 is not proof of safety', async () => {
+    await start({ [`/api/scans/${report.id}`]: { body: dartReport() } })
+    await go(/Risk findings/)
+    expect(await screen.findByText('Static rules · Python files only')).toBeVisible()
+    const note = screen.getByRole('note', { name: 'What the static rules check' })
+    expect(note).toHaveTextContent('Python (.py) files only')
+    expect(note).toHaveTextContent('0 suspected risks does not mean the change is safe')
+  })
+
+  test('Test intelligence says Run exists but execution is blocked, not "planned"', async () => {
+    await start()
+    await go(/Test intelligence/)
+    expect(await screen.findByText(/execution is currently blocked: ShipSafe has no verified isolated runner/)).toBeVisible()
+    expect(screen.queryByText(/planned for the next phase/)).not.toBeInTheDocument()
+  })
+
+  test('Claude Review page describes the OpenAI and Gemini integration and the manual Claude import', async () => {
+    await start()
+    await go(/Claude Review/)
+    expect(await screen.findByText(/the API server sends the scan to OpenAI or Gemini \(when its key is configured on the server\)/)).toBeVisible()
+    expect(screen.queryByText(/No API keys, no direct model calls/)).not.toBeInTheDocument()
+  })
 })
 
 

@@ -1,0 +1,288 @@
+{
+  "_note": "MOCK DATA. Captured from the mocked-HTTP fixtures in backend/tests/test_bitbucket_api.py, not from live Bitbucket. Workspace 'acme', repository 'ledger', SHAs are placeholders. Regenerate if the contract changes.",
+  "GET /api/bitbucket/status": {
+    "configured": true,
+    "provider": "bitbucket-cloud",
+    "workspace": "acme",
+    "repositories": [
+      "ledger"
+    ]
+  },
+  "GET /api/bitbucket/repositories": [
+    {
+      "id": "acme/ledger",
+      "slug": "ledger",
+      "name": "Ledger",
+      "url": "https://bitbucket.org/acme/ledger",
+      "default_branch": "main"
+    }
+  ],
+  "GET /api/bitbucket/repositories/ledger/pull-requests (before any scan)": {
+    "repository": {
+      "id": "acme/ledger",
+      "slug": "ledger",
+      "name": "Ledger",
+      "url": "https://bitbucket.org/acme/ledger",
+      "default_branch": "main"
+    },
+    "state": "open",
+    "pull_requests": [
+      {
+        "provider": "bitbucket-cloud",
+        "repository_id": "acme/ledger",
+        "id": "7",
+        "title": "Change 7",
+        "state": "open",
+        "source_ref": "feature/change-7",
+        "target_ref": "main",
+        "source_sha": null,
+        "target_sha": null,
+        "author": "Dev One",
+        "url": "https://bitbucket.org/acme/ledger/pull-requests/7",
+        "updated_at": "2026-11-12T10:00:00+00:00",
+        "scan_count": 0,
+        "latest_scan": null,
+        "stale_checked": false
+      },
+      {
+        "provider": "bitbucket-cloud",
+        "repository_id": "acme/ledger",
+        "id": "8",
+        "title": "Change 8",
+        "state": "open",
+        "source_ref": "feature/change-8",
+        "target_ref": "main",
+        "source_sha": null,
+        "target_sha": null,
+        "author": "Dev One",
+        "url": "https://bitbucket.org/acme/ledger/pull-requests/8",
+        "updated_at": "2026-11-12T10:00:00+00:00",
+        "scan_count": 0,
+        "latest_scan": null,
+        "stale_checked": false
+      }
+    ],
+    "truncated": false
+  },
+  "POST /api/bitbucket/repositories/ledger/pull-requests/7/scans (body {head_commit}) -> 201, report keys + binding": {
+    "report_keys": [
+      "id",
+      "created_at",
+      "repo_name",
+      "repository_path",
+      "base_ref",
+      "head_ref",
+      "base_sha",
+      "head_sha",
+      "duration_ms",
+      "summary",
+      "files",
+      "findings",
+      "affected_modules",
+      "test_suggestions",
+      "disclaimer"
+    ],
+    "summary": {
+      "files_changed": 1,
+      "lines_added": 0,
+      "lines_removed": 2,
+      "finding_count": 1,
+      "risk_score": 45,
+      "recommendation": "Critical review required",
+      "test_status": "not_run",
+      "truncated": false,
+      "files_omitted": 0
+    },
+    "binding": {
+      "provider": "bitbucket-cloud",
+      "repository_id": "acme/ledger",
+      "pull_request_id": "7",
+      "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "comparison": "merge-base",
+      "stale": false,
+      "stale_at": null,
+      "stale_checked": true
+    },
+    "_see": "Full report shape: docs/example-scan-report.json. Optional summary keys import_analysis_truncated/import_files_skipped appear only when import analysis was cut."
+  },
+  "GET /api/scans (history item, after the head moved, before any check)": {
+    "id": "36667b1c-2bd4-48e4-971f-cd972b008e00",
+    "created_at": "2026-11-12T18:39:46.162375+00:00",
+    "repo_name": "Ledger",
+    "base_ref": "main",
+    "head_ref": "feature/change-7",
+    "duration_ms": 2,
+    "summary": {
+      "files_changed": 1,
+      "lines_added": 0,
+      "lines_removed": 2,
+      "finding_count": 1,
+      "risk_score": 45,
+      "recommendation": "Critical review required",
+      "test_status": "not_run",
+      "truncated": false,
+      "files_omitted": 0
+    },
+    "binding": {
+      "provider": "bitbucket-cloud",
+      "repository_id": "acme/ledger",
+      "pull_request_id": "7",
+      "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "comparison": "merge-base",
+      "stale": false,
+      "stale_at": null,
+      "stale_checked": false
+    }
+  },
+  "GET /api/bitbucket/repositories/ledger/pull-requests (after the head moved)": {
+    "repository": {
+      "id": "acme/ledger",
+      "slug": "ledger",
+      "name": "Ledger",
+      "url": "https://bitbucket.org/acme/ledger",
+      "default_branch": "main"
+    },
+    "state": "open",
+    "pull_requests": [
+      {
+        "provider": "bitbucket-cloud",
+        "repository_id": "acme/ledger",
+        "id": "7",
+        "title": "Change 7",
+        "state": "open",
+        "source_ref": "feature/change-7",
+        "target_ref": "main",
+        "source_sha": "dddddddddddddddddddddddddddddddddddddddd",
+        "target_sha": "cccccccccccccccccccccccccccccccccccccccc",
+        "author": "Dev One",
+        "url": "https://bitbucket.org/acme/ledger/pull-requests/7",
+        "updated_at": "2026-11-12T10:00:00+00:00",
+        "scan_count": 1,
+        "latest_scan": {
+          "id": "36667b1c-2bd4-48e4-971f-cd972b008e00",
+          "created_at": "2026-11-12T18:39:46.162375+00:00",
+          "summary": {
+            "files_changed": 1,
+            "lines_added": 0,
+            "lines_removed": 2,
+            "finding_count": 1,
+            "risk_score": 45,
+            "recommendation": "Critical review required",
+            "test_status": "not_run",
+            "truncated": false,
+            "files_omitted": 0
+          },
+          "binding": {
+            "provider": "bitbucket-cloud",
+            "repository_id": "acme/ledger",
+            "pull_request_id": "7",
+            "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "head_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "comparison": "merge-base",
+            "stale": true,
+            "stale_at": "2026-11-12T18:39:46.171862+00:00",
+            "stale_checked": true
+          }
+        },
+        "stale_checked": true
+      },
+      {
+        "provider": "bitbucket-cloud",
+        "repository_id": "acme/ledger",
+        "id": "8",
+        "title": "Change 8",
+        "state": "open",
+        "source_ref": "feature/change-8",
+        "target_ref": "main",
+        "source_sha": null,
+        "target_sha": null,
+        "author": "Dev One",
+        "url": "https://bitbucket.org/acme/ledger/pull-requests/8",
+        "updated_at": "2026-11-12T10:00:00+00:00",
+        "scan_count": 0,
+        "latest_scan": null,
+        "stale_checked": false
+      }
+    ],
+    "truncated": false
+  },
+  "GET /api/bitbucket/repositories/ledger/pull-requests/7 (after the head moved)": {
+    "provider": "bitbucket-cloud",
+    "repository_id": "acme/ledger",
+    "id": "7",
+    "title": "Change 7",
+    "state": "open",
+    "source_ref": "feature/change-7",
+    "target_ref": "main",
+    "source_sha": "dddddddddddddddddddddddddddddddddddddddd",
+    "target_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "author": "Dev One",
+    "url": "https://bitbucket.org/acme/ledger/pull-requests/7",
+    "updated_at": "2026-11-12T10:00:00+00:00",
+    "repository": {
+      "id": "acme/ledger",
+      "slug": "ledger",
+      "name": "Ledger",
+      "url": "https://bitbucket.org/acme/ledger",
+      "default_branch": "main"
+    },
+    "scannable": true,
+    "not_scannable_code": null,
+    "not_scannable_reason": null,
+    "stale_checked": true,
+    "scans": [
+      {
+        "id": "36667b1c-2bd4-48e4-971f-cd972b008e00",
+        "created_at": "2026-11-12T18:39:46.162375+00:00",
+        "summary": {
+          "files_changed": 1,
+          "lines_added": 0,
+          "lines_removed": 2,
+          "finding_count": 1,
+          "risk_score": 45,
+          "recommendation": "Critical review required",
+          "test_status": "not_run",
+          "truncated": false,
+          "files_omitted": 0
+        },
+        "binding": {
+          "provider": "bitbucket-cloud",
+          "repository_id": "acme/ledger",
+          "pull_request_id": "7",
+          "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "comparison": "merge-base",
+          "stale": true,
+          "stale_at": "2026-11-12T18:39:46.171862+00:00",
+          "stale_checked": true
+        }
+      }
+    ]
+  },
+  "POST .../pull-requests/7/scans with an outdated head_commit -> 409": {
+    "detail": "The pull request has new commits since it was loaded. Reload it and scan again.",
+    "code": "head_changed"
+  },
+  "POST .../scans with a malformed head_commit -> 422 (FastAPI validation shape: detail is a list, no code)": {
+    "detail": [
+      {
+        "type": "string_pattern_mismatch",
+        "loc": [
+          "body",
+          "head_commit"
+        ],
+        "msg": "String should match pattern '^[0-9a-f]{40}$'",
+        "input": "abc",
+        "ctx": {
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    ]
+  },
+  "Any /api/bitbucket/* data route when not configured -> 503": {
+    "detail": "Bitbucket is not configured. Set SHIPSAFE_BITBUCKET_WORKSPACE, SHIPSAFE_BITBUCKET_REPOSITORIES and SHIPSAFE_BITBUCKET_TOKEN on the server, then restart the API.",
+    "code": "bitbucket_not_configured"
+  }
+}

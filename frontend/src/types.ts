@@ -41,6 +41,9 @@ export interface ScanSummary {
   /** Optional: absent in reports stored before truncation reporting existed; treat as false / 0. */
   truncated?: boolean;
   files_omitted?: number;
+  /** Present only when the import analysis was cut (Bitbucket scans read at most 200 files). */
+  import_analysis_truncated?: boolean;
+  import_files_skipped?: number;
 }
 export interface ImpactedModule { path: string; imports_changed: string[] }
 export interface TestSuggestion { category: string; file: string; scenario: string }
@@ -60,8 +63,86 @@ export interface Report {
   affected_modules: ImpactedModule[];
   test_suggestions: TestSuggestion[];
   disclaimer: string;
+  /** Added by the API beside the stored report (never part of it). Absent in old exports. */
+  binding?: Binding;
+  /** Frontend only: set on a canned report produced by the development mock mode. Never sent by the API. */
+  mock?: true;
 }
-export type ScanHistory = Pick<Report, 'id' | 'created_at' | 'repo_name' | 'base_ref' | 'head_ref' | 'duration_ms' | 'summary'>;
+export type ScanHistory = Pick<Report, 'id' | 'created_at' | 'repo_name' | 'base_ref' | 'head_ref' | 'duration_ms' | 'summary' | 'binding'>;
+
+// -- Bitbucket (Phase 2). Contract: docs/ARCHITECTURE.md, "Bitbucket routes";
+// examples: docs/example-bitbucket-responses.json.
+
+/** What a stored scan was bound to. Full 40-character SHAs live here. */
+export interface Binding {
+  provider: 'local-git' | 'bitbucket-cloud' | string;
+  repository_id: string | null;
+  pull_request_id: string | null;
+  base_commit: string | null;
+  head_commit: string | null;
+  /** "merge-base" for pull request scans, "direct" otherwise. */
+  comparison: 'direct' | 'merge-base';
+  /** The stored marker: the scan's head differs from the pull request's head. */
+  stale: boolean;
+  stale_at: string | null;
+  /** True only when THIS response compared the scan with Bitbucket's current head. */
+  stale_checked: boolean;
+}
+export interface BitbucketStatus {
+  configured: boolean;
+  provider: string | null;
+  workspace: string | null;
+  repositories: string[];
+}
+export interface BitbucketRepository {
+  id: string;
+  slug: string;
+  name: string;
+  url: string;
+  default_branch: string | null;
+}
+export type PullRequestState = 'open' | 'merged' | 'declined';
+export interface PullRequest {
+  provider: string;
+  repository_id: string;
+  id: string;
+  title: string;
+  state: PullRequestState;
+  source_ref: string;
+  target_ref: string;
+  /** Full SHA, or null (always null in the list unless the pull request already has scans). */
+  source_sha: string | null;
+  target_sha: string | null;
+  author: string | null;
+  url: string;
+  updated_at: string | null;
+}
+export interface PullRequestScan {
+  id: string;
+  created_at: string;
+  summary: ScanSummary;
+  binding: Binding;
+}
+export interface PullRequestListItem extends PullRequest {
+  scan_count: number;
+  latest_scan: PullRequestScan | null;
+  stale_checked: boolean;
+}
+export interface PullRequestList {
+  repository: BitbucketRepository;
+  state: PullRequestState;
+  pull_requests: PullRequestListItem[];
+  /** True when Bitbucket has more pull requests in this state than the 200 returned. */
+  truncated: boolean;
+}
+export interface PullRequestDetail extends PullRequest {
+  repository: BitbucketRepository;
+  scannable: boolean;
+  not_scannable_code: string | null;
+  not_scannable_reason: string | null;
+  stale_checked: boolean;
+  scans: PullRequestScan[];
+}
 
 export interface AIReviewFinding {
   title: string;

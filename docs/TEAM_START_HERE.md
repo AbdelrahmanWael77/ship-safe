@@ -41,9 +41,9 @@ git commit -m "Import ShipSafe v0.2 team starter"
 
 If your team imports into an existing repository, use its normal branch policy instead of initializing again. Do not add remotes or push company source without authorization.
 
-## Example safe branch workflow (after `main` exists)
+## Example safe branch workflow (from the default branch, `feat/p1-foundation`; this repository has no `main`)
 ```bash
-git switch main
+git switch feat/p1-foundation
 # If a shared remote/tracking branch has been configured: git pull --ff-only
 # replace 1/connector with your actual approved ticket
 # (Git worktrees are optional, useful for concurrent contributors)

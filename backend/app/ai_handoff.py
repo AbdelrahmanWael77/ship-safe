@@ -60,6 +60,12 @@ def _limitations(report: dict) -> list[str]:
         )
     else:
         items.append("Git patches are limited to the first 140 lines per file; no included patch was cut.")
+    skipped_imports = int(summary.get("import_files_skipped") or 0)
+    if skipped_imports:
+        items.append(
+            f"INCOMPLETE: affected_modules covers only part of the repository; {skipped_imports} Python "
+            f"file{'s were' if skipped_imports != 1 else ' was'} not checked for imports of the changed modules."
+        )
     items += [
         "Static heuristics are suspicions, not validated bugs.",
         "No repository tests were executed by ShipSafe.",

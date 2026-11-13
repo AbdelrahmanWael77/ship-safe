@@ -8,9 +8,9 @@
 - Each migration runs in one `BEGIN IMMEDIATE` transaction together with its version bump. A failure rolls the whole step back and stops startup.
 - If the file's version is higher than the code knows, startup stops with `SchemaVersionError` and the file is not modified.
 
-Phase 1 made **no schema change**. The runner was added so Phase 2 has a tested path that does not involve deleting `scans.db`.
+Phase 1 made **no schema change**. Phase 2 added version 2 (below). A database that has reached version 2 is refused by any older build (`SchemaVersionError`), so after running this code, do not point an older branch at the same `scans.db`; use a separate `SHIPSAFE_DB_PATH`.
 
-Covered by `backend/tests/test_foundation.py`: adoption of a populated v0.2 database, idempotence, rollback of a failing migration, refusal of a newer database, and row preservation across an additive column.
+Covered by `backend/tests/test_foundation.py` (the runner: adoption of a populated v0.2 database, idempotence, rollback of a failing migration, refusal of a newer database, row preservation across an additive column) and `backend/tests/test_migration_2.py` (version 2 itself).
 
 ## Rules
 
@@ -21,24 +21,22 @@ Covered by `backend/tests/test_foundation.py`: adoption of a populated v0.2 data
 5. Every migration ships with a test that starts from the previous version with rows present and asserts those rows are unchanged.
 6. The migration reviewer named in `docs/DECISIONS.md` approves it before merge.
 
-## Proposed for Phase 2 (design only, not implemented)
-
-Bitbucket scans need provider identity, full commit SHAs, and the pull request, without touching existing rows. Proposed migration 2:
+## Version 2 — scan binding (Phase 2 task 3, implemented)
 
 ```sql
 ALTER TABLE scans ADD COLUMN provider TEXT NOT NULL DEFAULT 'local-git';
-ALTER TABLE scans ADD COLUMN repository_id TEXT;    -- provider-scoped id, e.g. workspace/repo
+ALTER TABLE scans ADD COLUMN repository_id TEXT;    -- provider-scoped id, e.g. workspace/repo; local Git: resolved path
 ALTER TABLE scans ADD COLUMN pull_request_id TEXT;  -- NULL for branch comparisons
-ALTER TABLE scans ADD COLUMN base_commit TEXT;      -- full 40-character SHA
-ALTER TABLE scans ADD COLUMN head_commit TEXT;      -- full 40-character SHA
-CREATE INDEX idx_scans_pull_request
+ALTER TABLE scans ADD COLUMN base_commit TEXT;      -- full commit SHA
+ALTER TABLE scans ADD COLUMN head_commit TEXT;      -- full commit SHA
+ALTER TABLE scans ADD COLUMN stale_at TEXT;         -- ISO time the PR head was first seen to differ; NULL = not known stale
+CREATE INDEX IF NOT EXISTS idx_scans_pull_request
     ON scans(provider, repository_id, pull_request_id, created_at);
 ```
 
-- Existing rows become `provider = 'local-git'` with the other columns NULL. They stay readable and exportable exactly as before; NULL commits mean "not commit-bound".
-- New scans fill the columns from `ChangeSet` (`base_sha` and `head_sha` are already full SHAs) and `PullRequestRef`.
-- Stale detection compares a scan's `head_commit` with the pull request's current `source_sha`. It needs no change to stored reports.
-- Whether the report JSON also gains these fields is an API-contract decision for the Phase 2 backend and frontend owners. If it does, add keys; do not change the keys `review_context()` reads without a new review schema version.
-- Credentials are never stored in this database.
-
-Open questions for the team: whether `repository_id` should be backfilled for local rows from `report_json.repository_path`, and whether a pull request's title and URL are stored or always fetched live.
+- **Existing rows** become `provider = 'local-git'` with every other new column NULL. They are not backfilled: NULL commits mean "not commit-bound". `id`, `created_at`, `report_json` and all of `ai_reviews` are byte-identical after the migration.
+- **New local scans** (`POST /api/scans`) are stored through `db.insert_scan` with `provider`, `repository_id` (the resolved path), and the full `base_commit` / `head_commit` from the `ChangeSet`. `pull_request_id` stays NULL. `insert_scan` refuses anything that is not a full lowercase SHA (40 or 64 hex characters).
+- **The report JSON is unchanged.** It keeps its 12-character `base_sha` / `head_sha` and gains no key, so stored reports, exports, and the Claude review `context_digest` are unaffected. Since task 4 the API serves the columns as `binding` beside the report (see `docs/ARCHITECTURE.md`).
+- **Stale marker.** `db.sync_stale(conn, provider=, repository_id=, pull_request_id=, current_head=, observed_at=)` sets `stale_at` on that pull request's scans whose `head_commit` differs from `current_head` (keeping the first observation time) and clears it if the head returns to the scanned commit. Scans without a `head_commit` are never touched. Since task 4 the Bitbucket pull request routes call it on list (scanned pull requests only), detail, and scan.
+- **Not stored:** pull request title, URL, author (fetched live from the provider), and credentials (never in this database).
+- An imported AI review is stale when its scan is: join `ai_reviews.scan_id` to `scans.stale_at`. `ai_reviews` has no column of its own.

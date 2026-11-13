@@ -16,6 +16,8 @@ Rules for adding a migration (see docs/MIGRATIONS.md):
 """
 from __future__ import annotations
 
+import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -47,6 +49,18 @@ MIGRATIONS: tuple[Migration, ...] = (
             FOREIGN KEY(scan_id) REFERENCES scans(id)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_ai_reviews_scan ON ai_reviews(scan_id, imported_at)",
+    )),
+    Migration(2, "scans: provider, repository, pull request, full commit SHAs, stale marker", (
+        # Rows written before this migration become provider 'local-git' with
+        # every other new column NULL, meaning "not commit-bound".
+        "ALTER TABLE scans ADD COLUMN provider TEXT NOT NULL DEFAULT 'local-git'",
+        "ALTER TABLE scans ADD COLUMN repository_id TEXT",    # provider-scoped id, e.g. workspace/repo
+        "ALTER TABLE scans ADD COLUMN pull_request_id TEXT",  # NULL for branch comparisons
+        "ALTER TABLE scans ADD COLUMN base_commit TEXT",      # full commit SHA
+        "ALTER TABLE scans ADD COLUMN head_commit TEXT",      # full commit SHA
+        "ALTER TABLE scans ADD COLUMN stale_at TEXT",         # when the PR head was seen to differ; NULL = not known stale
+        """CREATE INDEX IF NOT EXISTS idx_scans_pull_request
+            ON scans(provider, repository_id, pull_request_id, created_at)""",
     )),
 )
 LATEST_VERSION = MIGRATIONS[-1].version
@@ -104,3 +118,109 @@ def migrate(db_file: Path, migrations: tuple[Migration, ...] = MIGRATIONS) -> in
         return current
     finally:
         conn.close()
+
+
+_FULL_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
+def _full_sha(value: str | None, name: str) -> str | None:
+    if value is not None and not _FULL_SHA.fullmatch(value):
+        raise ValueError(f"{name} must be a full lowercase commit SHA, not an abbreviation or a ref name")
+    return value
+
+
+def insert_scan(
+    conn: sqlite3.Connection, report: dict, *, provider: str = "local-git", repository_id: str | None = None,
+    pull_request_id: str | None = None, base_commit: str | None = None, head_commit: str | None = None,
+) -> None:
+    """Store a report with the commit binding it was produced from.
+
+    ``report`` is stored as given and never rewritten afterwards. The binding
+    columns sit beside it: full SHAs only, so a scan can later be compared
+    with a pull request's current head. Credentials are never stored here.
+    """
+    conn.execute(
+        "INSERT INTO scans (id, created_at, report_json, provider, repository_id, pull_request_id, base_commit, head_commit)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (report["id"], report["created_at"], json.dumps(report), provider, repository_id, pull_request_id,
+         _full_sha(base_commit, "base_commit"), _full_sha(head_commit, "head_commit")),
+    )
+
+
+def sync_stale(
+    conn: sqlite3.Connection, *, provider: str, repository_id: str, pull_request_id: str,
+    current_head: str, observed_at: str,
+) -> int:
+    """Record which scans of one pull request no longer match its head commit.
+
+    A scan is stale when its ``head_commit`` differs from ``current_head``.
+    ``stale_at`` keeps the first time that was observed; it is cleared if the
+    pull request head returns to the scanned commit, because the evidence
+    then describes the current code again. Scans with no ``head_commit`` are
+    not commit-bound and are left alone. Returns how many scans were newly
+    marked stale. ``report_json`` is never touched.
+    """
+    _full_sha(current_head, "current_head")
+    scope = "provider = ? AND repository_id = ? AND pull_request_id = ? AND head_commit IS NOT NULL"
+    key = (provider, repository_id, pull_request_id)
+    conn.execute(
+        f"UPDATE scans SET stale_at = NULL WHERE {scope} AND head_commit = ? AND stale_at IS NOT NULL",
+        (*key, current_head),
+    )
+    return conn.execute(
+        f"UPDATE scans SET stale_at = ? WHERE {scope} AND head_commit <> ? AND stale_at IS NULL",
+        (observed_at, *key, current_head),
+    ).rowcount
+
+
+BINDING_COLUMNS = "provider, repository_id, pull_request_id, base_commit, head_commit, stale_at"
+
+
+def binding(row: sqlite3.Row, *, stale_checked: bool = False) -> dict:
+    """What a stored scan was bound to, read from the columns beside the report.
+
+    Served next to the report by the API; never written into ``report_json``.
+    ``comparison`` says how base and head relate: a pull request scan runs
+    from the merge base to the head, any other scan compares the two commits
+    directly. Rows from before migration 2 have no commits ("not commit-bound").
+
+    ``stale`` is the stored marker. ``stale_checked`` is True only when the
+    route that built this response compared the scan's pull request with
+    Bitbucket's current head just before reading it; otherwise ``stale`` is
+    the last recorded state and ``stale: false`` means "not known to be stale".
+    """
+    return {
+        "provider": row["provider"], "repository_id": row["repository_id"],
+        "pull_request_id": row["pull_request_id"],
+        "base_commit": row["base_commit"], "head_commit": row["head_commit"],
+        "comparison": "merge-base" if row["pull_request_id"] is not None else "direct",
+        "stale": row["stale_at"] is not None, "stale_at": row["stale_at"],
+        "stale_checked": stale_checked,
+    }
+
+
+def pull_request_scans(
+    conn: sqlite3.Connection, *, provider: str, repository_id: str, pull_request_id: str, limit: int = 25,
+    stale_checked: bool = False,
+) -> list[dict]:
+    """Stored scans of one pull request, newest first, without their reports."""
+    rows = conn.execute(
+        f"SELECT id, created_at, report_json, {BINDING_COLUMNS} FROM scans"
+        " WHERE provider = ? AND repository_id = ? AND pull_request_id = ?"
+        " ORDER BY created_at DESC, rowid DESC LIMIT ?",
+        (provider, repository_id, pull_request_id, limit),
+    ).fetchall()
+    return [
+        {"id": row["id"], "created_at": row["created_at"], "summary": json.loads(row["report_json"]).get("summary"),
+         "binding": binding(row, stale_checked=stale_checked)}
+        for row in rows
+    ]
+
+
+def scanned_pull_requests(conn: sqlite3.Connection, *, provider: str, repository_id: str) -> dict[str, int]:
+    """``{pull_request_id: number of stored scans}`` for one repository."""
+    return dict(conn.execute(
+        "SELECT pull_request_id, COUNT(*) FROM scans"
+        " WHERE provider = ? AND repository_id = ? AND pull_request_id IS NOT NULL GROUP BY pull_request_id",
+        (provider, repository_id),
+    ).fetchall())

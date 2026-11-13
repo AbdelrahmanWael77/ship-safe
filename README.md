@@ -14,7 +14,7 @@ A **real full-stack starter application** for evidence-based Git change analysis
 
 ## Quick start
 
-Prerequisites: Python 3.11+, Git, and Node.js 20.19+ (or 22+) with npm.
+Prerequisites: Python 3.11+, Git, and **Node.js 22.12 or newer in the 22 line, or Node.js 24 or newer**, with npm. Node 20 is no longer supported for the frontend: the test runner (Vitest 5) requires Node 22.12+, and `frontend/package.json` declares this in `engines`.
 
 ### 1. Install backend dependencies
 
@@ -34,6 +34,8 @@ cd frontend
 npm install
 cd ..
 ```
+
+For an exact, reproducible install use `npm ci` instead of `npm install`. Frontend checks, run from `frontend`: `npm test` (Vitest with Testing Library, in jsdom; no backend needed) and `npm run build`.
 
 ### 3. Start both applications
 
@@ -145,6 +147,8 @@ curl http://127.0.0.1:8000/api/scans
 ```
 
 Additional endpoints: `GET /api/health`, `GET /api/scans/{id}`, `GET /api/scans/{id}/export`, `GET /api/repository/status`, `GET /api/scans/{id}/ai/handoff`, `POST /api/scans/{id}/ai/reviews`, `GET /api/scans/{id}/ai/reviews`, and `GET /api/scans/{id}/ai/reviews/latest`.
+
+Read-only Bitbucket Cloud endpoints (backend only, tested against mocked HTTP, never against live Bitbucket; no dashboard screen yet): `GET /api/bitbucket/status`, `GET /api/bitbucket/repositories`, `GET /api/bitbucket/repositories/{slug}/pull-requests`, `GET …/pull-requests/{id}`, `POST …/pull-requests/{id}/scans`. They answer 503 until Bitbucket is configured; see [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Scan your own authorized local repository
 

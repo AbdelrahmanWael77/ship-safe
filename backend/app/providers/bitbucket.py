@@ -32,8 +32,8 @@ from urllib.parse import quote, urlsplit
 import httpx
 
 from ..errors import (
-    ConfigError, ProviderAuthError, ProviderError, ProviderUnavailable, RefNotFound,
-    RepositoryAccessDenied, RepositoryNotFound, ScanError,
+    ChangeTooLarge, ConfigError, ProviderAuthError, ProviderError, ProviderUnavailable, PullRequestNotFound,
+    RefNotFound, RepositoryAccessDenied, RepositoryNotFound, ScanError,
 )
 from .base import MAX_CHANGED_FILES, ChangeSet, FileDelta, PullRequestRef, RepositoryRef, valid_ref
 
@@ -239,7 +239,7 @@ class BitbucketCloudProvider:
         if status == 404:
             raise _NotFound("Not found on Bitbucket")
         if status == 555:
-            raise ProviderError("Bitbucket timed out producing this response (HTTP 555); the change is too large")
+            raise ChangeTooLarge("Bitbucket timed out producing this response (HTTP 555); the change is too large")
         if status >= 400:
             raise ProviderError(f"Bitbucket returned HTTP {status}")
         return bytes(body[:limit]), len(body) > limit, status
@@ -336,12 +336,22 @@ class BitbucketCloudProvider:
         ``source_sha``/``target_sha`` are None here: the list payload carries
         abbreviated hashes only. Use :meth:`get_pull_request` to bind a scan.
         """
+        return self.list_pull_requests_page(repository, state)[0]
+
+    def list_pull_requests_page(self, repository: RepositoryRef, state: str = "open") -> tuple[list[PullRequestRef], bool]:
+        """:meth:`list_pull_requests` plus whether the list was cut.
+
+        The flag is True only when pull requests were actually left out:
+        Bitbucket has more than ``MAX_PULL_REQUESTS`` in this state, or the
+        page limit stopped the walk early. A list of exactly
+        ``MAX_PULL_REQUESTS`` with nothing after it is complete.
+        """
         if state not in _PR_STATES:
             raise ScanError(f"Unknown pull request state: {state!r}")
-        items, _ = self._collect(
+        items, total = self._collect(
             f"{self._api(repository)}/pullrequests", {"state": _PR_STATES[state], "pagelen": 50}, MAX_PULL_REQUESTS,
         )
-        return [self._pull_request(repository, item) for item in items]
+        return [self._pull_request(repository, item) for item in items], total > len(items)
 
     def get_pull_request(self, repository: RepositoryRef, pull_request_id: str) -> PullRequestRef:
         """One pull request with full 40-character SHAs for both sides.
@@ -355,7 +365,7 @@ class BitbucketCloudProvider:
         try:
             payload = self._json(f"{self._api(repository)}/pullrequests/{pull_request_id}")
         except _NotFound as exc:
-            raise ProviderError(f"Pull request {pull_request_id} not found in {repository.id}") from exc
+            raise PullRequestNotFound(f"Pull request {pull_request_id} not found in {repository.id}") from exc
         return self._pull_request(repository, payload, resolve=True)
 
     def _pull_request(self, repository: RepositoryRef, payload: dict, *, resolve: bool = False) -> PullRequestRef:
@@ -418,6 +428,23 @@ class BitbucketCloudProvider:
         if not isinstance(full, str) or not _FULL_SHA.fullmatch(full):
             raise ProviderError(_UNEXPECTED)
         return full
+
+    def merge_base(self, repository: RepositoryRef, first_sha: str, second_sha: str) -> str:
+        """Full SHA of the best common ancestor of two commits.
+
+        A pull request is compared from here to its head, which is what
+        Bitbucket's own pull request view shows. Not part of the provider
+        protocols; only pull request scans need it.
+        """
+        if not all(isinstance(sha, str) and _FULL_SHA.fullmatch(sha) for sha in (first_sha, second_sha)):
+            raise ScanError("Full commit SHAs are required to find a merge base")
+        try:
+            found = self._json(f"{self._api(repository)}/merge-base/{first_sha}..{second_sha}").get("hash")
+        except _NotFound as exc:
+            raise RefNotFound("These commits have no common ancestor readable through this repository") from exc
+        if not isinstance(found, str) or not _FULL_SHA.fullmatch(found):
+            raise ProviderError(_UNEXPECTED)
+        return found
 
     def get_changes(
         self, repository: RepositoryRef, base_ref: str, head_ref: str,

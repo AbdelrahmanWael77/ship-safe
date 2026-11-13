@@ -11,9 +11,15 @@ import {
   Shield, ShieldAlert, ShieldCheck, ShieldQuestion, UploadCloud, Bot, FileArchive, SlidersHorizontal,
   Sparkles, Terminal, TrendingUp, X, Zap,
 } from 'lucide-react'
+import { api, API_BASE as API } from './api'
+import { BitbucketSection } from './bitbucket/BitbucketSection'
+import { getBitbucketStatus } from './bitbucket/client'
+import { BITBUCKET_NAV, bitbucketPageLabel, isBitbucketPage } from './bitbucket/pages'
+import type { BitbucketPage } from './bitbucket/pages'
+import { useLoad } from './bitbucket/useLoad'
 import type { AIReview, DemoInfo, FileChange, Finding, Report, ScanHistory } from './types'
 
-type Page = 'overview' | 'changes' | 'findings' | 'tests' | 'ai' | 'history' | 'settings'
+type Page = 'overview' | 'changes' | 'findings' | 'tests' | 'ai' | 'history' | 'settings' | BitbucketPage
 const NAV: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'changes', label: 'Code changes', icon: GitCompareArrows },
@@ -23,39 +29,6 @@ const NAV: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'history', label: 'Scan history', icon: History },
   { id: 'settings', label: 'Configuration', icon: Settings2 },
 ]
-const API = import.meta.env.VITE_API_BASE || ''
-
-// FastAPI returns `detail` as a string for handled errors and as a list of
-// {loc, msg} objects for request-validation (422) errors.
-function describeError(detail: unknown, status: number): string {
-  if (typeof detail === 'string' && detail) return detail
-  if (Array.isArray(detail)) {
-    const parts = detail.map(item => {
-      if (item && typeof item === 'object' && 'msg' in item) {
-        const loc = Array.isArray((item as { loc?: unknown }).loc) ? ((item as { loc: unknown[] }).loc).filter(part => part !== 'body').join('.') : ''
-        return loc ? `${loc}: ${String((item as { msg: unknown }).msg)}` : String((item as { msg: unknown }).msg)
-      }
-      return String(item)
-    })
-    if (parts.length) return `Invalid request: ${parts.join('; ')}`
-  }
-  return `API error ${status}`
-}
-
-async function api<T>(path: string, options?: RequestInit): Promise<T> {
-  let response: Response
-  try {
-    response = await fetch(API + path, options)
-  } catch {
-    throw new Error('Could not reach the API. Start FastAPI on port 8000, then refresh this page.')
-  }
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({ detail: response.statusText }))
-    throw new Error(describeError(data?.detail, response.status))
-  }
-  return response.json() as Promise<T>
-}
-
 const relative = (date: string) => {
   const seconds = Math.round((Date.now() - new Date(date).getTime()) / 1000)
   if (seconds < 60) return 'Just now'
@@ -243,7 +216,9 @@ export default function App() {
 
   const goFile = (path: string) => { setSelectedFile(path); setPage('changes') }
   const selected = useMemo(() => report?.files.find(f => f.path === selectedFile) || report?.files[0], [report, selectedFile])
-  const pageName = NAV.find(n => n.id === page)?.label || 'Overview'
+  const pageName = NAV.find(n => n.id === page)?.label || bitbucketPageLabel(page) || 'Overview'
+  // Asked once at start; a failure here never touches the demo flow or the error banner.
+  const bitbucketStatus = useLoad(getBitbucketStatus, 'bitbucket-status')
   const latestAI = aiReviews[0]
   const filteredFindings = report?.findings.filter(f => `${f.title} ${f.category} ${f.file}`.toLowerCase().includes(search.toLowerCase())) || []
 
@@ -254,6 +229,10 @@ export default function App() {
       <div className="sidebar-section-label">WORKSPACE</div>
       <nav className="nav-list" aria-label="Primary navigation">
         {NAV.filter(item => item.id !== 'settings').map(item => <button className={`nav-item ${page === item.id ? 'active' : ''}`} key={item.id} onClick={() => { setPage(item.id); setSidebarOpen(false) }}><item.icon size={18}/><span>{item.label}</span>{item.id === 'findings' && !!report?.findings.length && <b className="nav-count">{report.findings.length}</b>}</button>)}
+      </nav>
+      <div className="sidebar-section-label tools-label">BITBUCKET</div>
+      <nav className="nav-list" aria-label="Bitbucket navigation">
+        {BITBUCKET_NAV.map(item => <button className={`nav-item ${page === item.id ? 'active' : ''}`} key={item.id} onClick={() => { setPage(item.id); setSidebarOpen(false) }}><item.icon size={18}/><span>{item.label}</span>{bitbucketStatus.data && !bitbucketStatus.data.configured && <b className="nav-tag" title="Bitbucket is not configured on the server">Off</b>}</button>)}
       </nav>
       <div className="sidebar-section-label tools-label">PREFERENCES</div>
       <nav className="nav-list"><button className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => { setPage('settings'); setSidebarOpen(false) }}><Settings2 size={18}/><span>Configuration</span></button></nav>
@@ -311,7 +290,8 @@ export default function App() {
             <div className="footnote"><Info size={15}/> Git findings are heuristic. Imported AI suggestions are separate, unverified, and never change test execution status.</div>
           </>}
         </>}
-        {page !== 'overview' && <>
+        {isBitbucketPage(page) && <BitbucketSection page={page} status={bitbucketStatus}/>}
+        {page !== 'overview' && !isBitbucketPage(page) && <>
           <div className="subpage-heading"><div className="eyebrow"><span className="eyebrow-line"/> WORKSPACE / {page.toUpperCase()}</div><div className="subpage-title"><div><h1>{pageName}<span className="title-dot">.</span></h1><p>{({overview:'',changes:'Review actual changed files, functions, and Git patch details.',findings:'Investigate suspected problems and the evidence behind them.',tests:'Identify missing regression coverage. No tests are claimed as executed.',ai:'Human-mediated Claude Code review. No API keys, no direct model calls.',history:'Go back to previous local analysis reports.',settings:'Local-first setup, security boundaries, and data sources.'} as Record<Page,string>)[page]}</p></div>{report && page !== 'settings' && <a className="secondary-button export-link" href={`${API}/api/scans/${report.id}/export`} download><Download size={16}/> Export JSON</a>}</div></div>
           {page === 'changes' && report && <div className="code-layout">
             <div className="panel file-browser"><div className="panel-head"><div><h3>Repository files</h3><p>{report.summary.files_changed} changed in this compare{report.summary.files_omitted ? ` · ${report.summary.files_omitted} more not listed` : ''}</p></div><FolderGit2 size={18} className="dim"/></div>{report.files.map(file => <button className={`file-select ${selected?.path === file.path ? 'selected' : ''}`} key={file.path} onClick={() => setSelectedFile(file.path)}><FileIcon path={file.path}/><span><strong>{file.path.split('/').pop()}</strong><small>{file.path}</small></span><ChevronRight size={16}/></button>)}<div className="browser-foot"><GitCommitHorizontal size={14}/><span>{report.base_sha} → {report.head_sha}</span></div></div>

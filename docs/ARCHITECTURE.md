@@ -200,7 +200,7 @@ Backend only, under `backend/tests` (229 tests on 2026-11-12). Each test builds 
 | `test_migration_2.py` | 17 | P2 task 3: schema version 2, row preservation, rollback, `insert_scan`, `sync_stale` |
 | `test_bitbucket_api.py` | 41 | P2 task 4: Bitbucket routes end to end over mocked HTTP, merge-base comparison, stale marking and `stale_checked`, error mapping, import-analysis bound, report-shape guard, example-file drift guard |
 
-There are no frontend unit tests and no lint step. The dashboard has been exercised in headless Chrome by throwaway scripts (recorded in the session handoff: all six demo branches, export and ZIP per scan); those scripts are not part of the repository.
+Frontend: `frontend/src/App.test.tsx` (2 tests, `npm test`) is a smoke test of the existing demo dashboard with `fetch` stubbed; it uses `docs/example-scan-report.json` as its fixture. There is no lint step. The dashboard has also been exercised in headless Chrome by throwaway scripts (recorded in the session handoff: all six demo branches, export and ZIP per scan; re-run on 2026-11-13 against Vite 5 and Vite 6 with identical results); those scripts are not part of the repository.
 
 ## Phase 2 dependency points
 
@@ -255,6 +255,6 @@ Scan orchestration   scanner.scan_changes(provider: ChangeProvider, repository, 
 - Heuristics are tuned to the demo: three rules, Python only, absolute imports only.
 - `GET /api/scans` parses every full report to build the summary list.
 - The API version string (`0.2.0`) is hard-coded in `main.py` and again in `App.tsx`.
-- No frontend tests or lint. `npm audit` reports 2 advisories (1 moderate, 1 high) in the build toolchain. Assessed 2026-11-12: every listed Vite advisory requires the dev server to be exposed with `--host`/`server.host` or run in middleware mode, which this project never does (loopback only, Vite's own `allowedHosts` rejects spoofed hosts); the esbuild advisory concerns esbuild's own serve mode, which Vite does not use; four of the advisory lines are for `launch-editor`, which is not in the dependency tree; the production bundle contains no Vite or esbuild code. No non-breaking update exists (5.4.21 is the newest 5.x; fixes start at Vite 6.4.4 and `@vitejs/plugin-react` 6 requires Vite 8). Accepted for Phase 1; upgrade scheduled with the Phase 2 toolchain work.
+- No lint step. Frontend tests exist since 2026-11-13 (`npm test`: Vitest 5 with Testing Library in jsdom), so far only a smoke test of the demo dashboard. Toolchain: Vite 6.4.6, `@vitejs/plugin-react` 4.7, Vitest 5.1.0; `npm audit` reports 0 advisories (2026-11-13). The two advisories recorded for Vite 5.4.21 in Phase 1 are cleared by this upgrade. Node 22.12+ (or 24+) is required; Node 20 is unsupported and was not tested.
 - The backend test suite emits a Starlette deprecation warning about `httpx`.
 - The frontend has no favicon; the browser logs one 404 for `/favicon.ico` on each load.

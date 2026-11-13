@@ -20,10 +20,10 @@ Read `AGENTS.md`, `CLAUDE.md`, and the checkpoint at the top of `docs/IMPLEMENTA
 **Tests last run (2026-11-12, Linux cloud container, Python 3.13.18, Node from the container image):**
 - `cd backend && python -m pytest -q tests/test_bitbucket_api.py` → 41 passed
 - `cd backend && python -m pytest -q` → 229 passed, 1 warning
-- `cd frontend && npm ci && npm run build` → ✓ built (no frontend source changed)
+- 2026-11-13, `feat/p2-frontend-screens` (task 5, milestone 1 — toolchain only): `cd frontend && npm ci && npm test && npm run build` → 2 tests passed, ✓ built; `npm audit` → 0. Frontend needs Node 22.12+ or 24+ (Vite 6.4.6, Vitest 5.1.0).
 - Not re-run on Windows since `08b3b1b`. On Windows use `.venv\Scripts\python`.
 
-**Branch / commit / uncommitted edits:** GitHub has no `main`; the default branch is `feat/p1-foundation` (`98c9d92`, contains task 1). Stacked on `08b3b1b`: `feat/p2-bitbucket-settings` (`ebc9068`, task 2) → `feat/p2-migration-2` (`82d14ed`, task 3) → `feat/p2-bitbucket-api` (task 4, branch head). All three are committed; none was on GitHub when this was written (the agent session had no GitHub credential), so check `git ls-remote origin`. No uncommitted edits. Start task 5 on a new `feat/p2-<ticket>` branch from `feat/p2-bitbucket-api`. Commit or push only if the owner says so; never commit directly to `feat/p1-foundation`, and never force push or rebase.
+**Branch / commit / uncommitted edits:** GitHub has no `main`; the default branch is `feat/p1-foundation` (`98c9d92`, contains task 1). On GitHub, stacked on `08b3b1b`: `feat/p2-bitbucket-settings` (`ebc9068`, task 2) → `feat/p2-migration-2` (`82d14ed`, task 3) → `feat/p2-bitbucket-api` (`790b293`, task 4). Task 5 is in progress on `feat/p2-frontend-screens` (cut from `790b293`, local only, not pushed): milestone 1, the frontend toolchain and test setup, is committed; the remaining milestones are listed in the checkpoint. Commit at milestones; push only if the owner says so; never commit directly to `feat/p1-foundation`.
 
 **Known blockers:** live Bitbucket is NOT TESTED (no credentials; never ask for a token in chat), so every payload shape is unconfirmed until task 6. The owner accepted the response shapes as the initial contract, subject to frontend integration validation; record any gap you find instead of silently changing the backend. The repository has no frontend test harness, while the Phase 2 prompt asks for frontend tests: raise this with the owner before choosing one. A database opened by this code is version 2; older branches refuse it.
 

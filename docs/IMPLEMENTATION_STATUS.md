@@ -6,14 +6,11 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 
 - **Roadmap:** `prompts/PHASE-01-FOUNDATION.md` … `PHASE-05-FINAL-VALIDATION.md`; gates in `docs/ACCEPTANCE_MATRIX.md`
 - **Current phase:** 2 — Bitbucket repositories and pull requests (`prompts/PHASE-02-BITBUCKET.md`)
-- **Last updated:** 2026-11-12
-- **Branch / latest commit:** (remote state verified with `git ls-remote origin` on 2026-11-12)
-  - GitHub has **no `main` branch**. The default and integration branch is `feat/p1-foundation`, at `98c9d92`, which is the merge of pull request #1 (`feat/p2-bitbucket-provider`, P2 task 1). The rule files were corrected on 2026-11-12 to name it.
-  - `feat/p2-bitbucket-provider` at `08b3b1b` — P2 task 1. On GitHub; merged into `feat/p1-foundation`.
-  - `feat/p2-bitbucket-settings` at `ebc9068`, cut from `08b3b1b` — P2 task 2. Committed. **Not on GitHub yet.**
-  - `feat/p2-migration-2` at `82d14ed`, cut from `ebc9068` — P2 task 3. Committed. **Not on GitHub yet.**
-  - `feat/p2-bitbucket-api`, cut from `82d14ed` — P2 task 4. Committed with the owner's approval (branch head). **Not on GitHub yet.**
-  - The agent session had no GitHub credential, so nothing after `08b3b1b` could be pushed; the owner is arranging access. Push as three new branches in order: settings, migration-2, bitbucket-api. No force push, rebase, or merge. Check `git ls-remote origin` first.
+- **Last updated:** 2026-11-13
+- **Branch / latest commit:** (remote state verified with `git ls-remote origin` on 2026-11-13)
+  - GitHub has **no `main` branch**. The default and integration branch is `feat/p1-foundation`, at `98c9d92`, which is the merge of pull request #1 (`feat/p2-bitbucket-provider`, P2 task 1). The rule files name it accordingly.
+  - On GitHub, stacked on `08b3b1b`, none merged: `feat/p2-bitbucket-settings` (`ebc9068`, task 2) → `feat/p2-migration-2` (`82d14ed`, task 3) → `feat/p2-bitbucket-api` (`790b293`, task 4). Pushed by the owner on 2026-11-12.
+  - `feat/p2-frontend-screens`, cut from `790b293` — P2 task 5, in progress. **Local only, not pushed.** Milestone 1 (frontend toolchain and test setup) is the branch head; no feature work yet.
 
 ### Completed and verified
 - Baseline v0.2 ("Phase 0") — imported as `10f3cee`.
@@ -29,7 +26,10 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 2. [x] Bitbucket settings and credential loading
 3. [x] Migration 2: provider / repository / PR / full base+head SHA columns, stale marker
 4. [x] API: list repositories, list PRs, scan a PR bound to exact SHAs, stale detection
-5. [ ] Frontend: Repositories, Pull Requests, PR Analysis screens with typed client (**next**)
+5. [ ] Frontend: Repositories, Pull Requests, PR Analysis screens with typed client (**in progress**)
+   - [x] Milestone 1: toolchain (Vite 6.4.6, Vitest 5.1.0, Testing Library), `npm test`, smoke test of the demo dashboard
+   - [ ] `truncated` flag on the pull request list (approved backend change)
+   - [ ] Types, API helper, stale logic; Repositories, Pull Requests, PR Analysis screens; integration with existing pages; development mock mode; docs
 6. [ ] Human-run read-only live smoke test (PASS or BLOCKED), docs, gates
 
 ### Current working state
@@ -61,6 +61,12 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
   - `cd backend && python -m pytest -q` → 229 passed, 1 warning (188 after task 3 + 41 new)
   - Two deliberate breakages were caught by the new tests (target tip used instead of merge base: 11 failures; stale refresh removed from the list route: 1 failure), then reverted.
   - `cd frontend && npm ci && npm run build` → ✓ built (198.79 kB JS; no frontend source changed)
+- **Frontend toolchain milestone (2026-11-13, Linux cloud container, on `feat/p2-frontend-screens`):**
+  - Node 22.23.4 / npm 10.9.9: `npm ci` (no flags) exit 0; `npm test` → 2 passed; `npm run build` → ✓ built (200.11 kB JS); `npm audit` → 0 vulnerabilities; `npm ls --all` → no invalid, missing or extraneous packages.
+  - Node 24.22.1 / npm 11.19.1: `npm ci`, `npm test` (2 passed), `npm run build`, `npm audit` (0) all pass; the lock file is not modified. npm 11 prints an "install-scripts" notice for esbuild's postinstall; the build still works.
+  - Scripted headless-browser run of the demo (overview, all pages, findings, diff, two new scans, history, handoff ZIP, `/api` proxy): identical results on Vite 5.4.21 and Vite 6.4.6.
+  - `cd backend && python -m pytest -q` → 229 passed (unchanged; only an error message in `scripts/dev.py` changed outside the frontend).
+  - **Not verified:** Windows, Node 20 (unsupported from now on), `vite preview`.
   - **Not re-run on Windows** since `08b3b1b`. **Live Bitbucket: NOT TESTED.**
 
 ### Blockers / known issues
@@ -81,7 +87,7 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 - **Goal (P2 task 5):** Frontend — Repositories, Pull Requests, and PR Analysis screens against the task 4 routes, with a typed client.
 - **Likely files:** `frontend/src/types.ts` (add `Binding`, `BitbucketRepository`, `PullRequestListItem`, `PullRequestDetail`, `PullRequestScan`, optional `binding` on `Report`/`ScanHistory`, the two optional summary keys), `frontend/src/App.tsx`, `frontend/src/styles.css`.
 - **Done when:** the dashboard lists approved repositories and their pull requests, scans a pull request and shows its diff and findings, shows the bound commits, a stale badge and an "Open in Bitbucket" link, handles loading, empty, error and "Bitbucket not configured" (503 `bitbucket_not_configured`) states, sends `head_commit` with the scan request and handles 409 `head_changed`; any mock data is labelled as mock; `npm run build` passes; the existing demo flow is unchanged.
-- **Decide first:** whether to add a frontend test harness (the repository has none; the Phase 2 prompt asks for frontend tests), and confirm the response shapes with the frontend owner.
+- **Decided (owner, 2026-11-12/13):** Vitest with Testing Library (installed in milestone 1); development-only fixture mock mode with a permanent "MOCK DATA" banner; a `truncated` flag on the pull request list; new files under `frontend/src/bitbucket/`; Playwright end-to-end deferred until after task 6. Response shapes are accepted as the initial contract, subject to integration.
 - **Avoid:** backend contract changes without recording them; any Bitbucket write; putting a credential in a `VITE_*` variable.
 
 ### Deferred (existing roadmap only)

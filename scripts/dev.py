@@ -38,7 +38,7 @@ def load_env_file(path: Path) -> list[str]:
 def main() -> None:
     npm = shutil.which('npm.cmd' if sys.platform == 'win32' else 'npm')
     if not npm:
-        raise SystemExit('Node/npm not found. Install Node.js 20.19+ or 22+ first.')
+        raise SystemExit('Node/npm not found. Install Node.js 22.12+ (22 line) or 24+ first.')
     if not (ROOT / 'frontend' / 'node_modules').exists():
         raise SystemExit('Frontend packages missing. Run: cd frontend && npm install')
     applied = load_env_file(ROOT / '.env')

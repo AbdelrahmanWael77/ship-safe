@@ -14,7 +14,7 @@ A **real full-stack starter application** for evidence-based Git change analysis
 
 ## Quick start
 
-Prerequisites: Python 3.11+, Git, and Node.js 20.19+ (or 22+) with npm.
+Prerequisites: Python 3.11+, Git, and **Node.js 22.12 or newer in the 22 line, or Node.js 24 or newer**, with npm. Node 20 is no longer supported for the frontend: the test runner (Vitest 5) requires Node 22.12+, and `frontend/package.json` declares this in `engines`.
 
 ### 1. Install backend dependencies
 
@@ -34,6 +34,8 @@ cd frontend
 npm install
 cd ..
 ```
+
+For an exact, reproducible install use `npm ci` instead of `npm install`. Frontend checks, run from `frontend`: `npm test` (Vitest with Testing Library, in jsdom; no backend needed) and `npm run build`.
 
 ### 3. Start both applications
 

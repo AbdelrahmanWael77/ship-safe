@@ -68,7 +68,7 @@ Decision owner: Nour Waled (confirm or object before merge)
 6. The initial repository import was committed directly to `main` as the starting point.
 7. The demo seeder may rewrite branches inside the demo directory only when they are missing or carry no commit, and never touches a repository it did not generate.
 8. `frontend/package-lock.json` is committed for reproducible builds.
-9. Vite 5.4.21 is accepted for Phase 1 (see `docs/ARCHITECTURE.md`, known brittle areas); the toolchain upgrade is Phase 2 work.
+9. Vite 5.4.21 is accepted for Phase 1 (see `docs/ARCHITECTURE.md`, known brittle areas); the toolchain upgrade is Phase 2 work. (Done 2026-11-13: Vite 6.4.6, see the entry of that date.)
 
 ## 2026-11-12 — Phase 2 starts on a branch stacked on unmerged Phase 1; Bitbucket Cloud
 Decision owner: Nour Waled (confirm or object before merge)
@@ -125,3 +125,11 @@ Decision: every `binding` carries `stale_checked`, true only when the route that
 Alternatives considered: a stored `stale_checked_at` column (migration 3; would let history screens say "last checked at"), or always re-checking every scanned pull request (unbounded requests).
 Security / product impact: none on data. The UI must show `stale: false, stale_checked: false` as "not checked", never as "current". Documented with a reading table in `docs/ARCHITECTURE.md`.
 Related ticket / commit: P2 task 4, `feat/p2-bitbucket-api`
+
+## 2026-11-13 — Frontend toolchain: Vite 6.4.6 and Vitest 5.1.0; Node 22.12+
+Decision owner: Mohamed Elsayed (approved 2026-11-13)
+Problem / tradeoff: Task 5 needs frontend tests. The only Vitest line that works with Vite 5 (3.2.7) is unmaintained and adds three advisories, two rated critical, that will not be fixed. Patched Vitest needs Vite 6 or newer.
+Decision: Upgrade `vite` from 5.4 to `^6.4.6` (one major) and add `vitest ^5.1.0`, `jsdom`, and Testing Library (`dom`, `react`, `user-event`, `jest-dom`) as dev dependencies. `@vitejs/plugin-react` stays at 4.7. `engines.node` is `^22.12.0 || >=24.0.0` because Vitest 5 requires it. Done as its own commit before any Task 5 feature work. No application source, proxy, or build setting changed.
+Alternatives considered: Vitest 3.2.7 on Vite 5 (rejected: critical advisories, unmaintained). Vitest 4.1.12 (supports Node 20, but npm 10.9.9 crashes while resolving it from scratch, so the lock file would have to be made with npm 11). Vite 8 with plugin-react 6 (installed only with `--legacy-peer-deps`). Jest with ts-jest (477 packages and 22 advisories against about 200 and 0; no support for `import.meta.env` without a workaround).
+Security / product impact: `npm audit` goes from 2 advisories (1 moderate, 1 high) to 0. Node 20 is no longer supported for the frontend. The bundle grows from 198.79 kB to 200.11 kB. The demo behaves the same in a scripted browser run on both versions. Not verified on Windows or with `vite preview`.
+Related ticket / commit: P2 task 5, milestone 1, `feat/p2-frontend-screens`

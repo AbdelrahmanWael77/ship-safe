@@ -71,6 +71,20 @@ Optional. With no key set, the Gemini panel on the Claude Review page says it is
 - **Where the key does not appear.** It is wrapped in `config.Secret`, never put in a URL, and masked out of Google's error messages before they are shown (`backend/tests/test_gemini.py`).
 - **Billing.** A key whose Google project has no access to the Gemini API (for example "free tier is not available for this project") gets HTTP 502 `gemini_permission_denied` with Google's reason; that has to be fixed in Google AI Studio, not in ShipSafe.
 
+## OpenAI AI review settings
+
+Optional, and independent of Gemini. With both keys set, the dashboard offers both and picks OpenAI first; the person can switch. With neither, the AI review controls say no model is configured.
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `SHIPSAFE_OPENAI_API_KEY` | yes, to turn OpenAI on | **Secret.** OpenAI API key. Sent only by the API server, only in the `Authorization: Bearer` header to `api.openai.com` (Responses API). |
+| `SHIPSAFE_OPENAI_MODEL` | no | Model name, default `gpt-6-luna`. Setting it without a key stops the API at startup. |
+| `SHIPSAFE_OPENAI_REASONING_EFFORT` | no | `minimal`, `low` (default), `medium`, `high` or `none`. Higher effort costs more output tokens. A model that does not accept the setting is asked again without it. Setting it without a key stops the API at startup. |
+
+- **What is sent, stored and refused:** exactly as for Gemini above (same review context, same HTTP 428 without `acknowledge_source_sharing` for non-demo code, same validation). Stored with `source: openai_api_generated_unverified`.
+- **Cost shown:** token usage for every review, plus an estimated USD cost for the models in `PRICES_PER_MILLION` in `backend/app/openai_review.py` (prices as read on the date in `PRICES_AS_OF`; an estimate, not a bill). Other models show tokens only.
+- **Where the key does not appear:** wrapped in `config.Secret`, never put in a URL, masked out of OpenAI's error messages (`backend/tests/test_openai_review.py`).
+
 ## Network binding
 
 Not configurable, on purpose.
@@ -90,4 +104,4 @@ The API has no authentication. Do not start it with `--host 0.0.0.0` or put it b
 
 ## Not implemented
 
-There are no Claude credential settings, and no code that would read them: Claude reviews stay a manual handoff. The only secrets are the Bitbucket token and the Gemini API key above.
+There are no Claude credential settings, and no code that would read them: Claude reviews stay a manual handoff. The only secrets are the Bitbucket token and the Gemini and OpenAI API keys above.

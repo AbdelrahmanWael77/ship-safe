@@ -155,6 +155,13 @@ export interface AIReviewFinding {
   recommendation: string;
   confidence: 'low' | 'medium' | 'high';
   related_static_finding_ids: string[];
+  /** Review schema v2 only (absent in v1 reviews). */
+  id?: string;
+  /** Always "suspected": an imported review cannot verify anything. */
+  status?: 'suspected';
+  suggested_validation?: string;
+  /** Text only. ShipSafe never applies it. */
+  proposed_patch?: string | null;
 }
 export interface AIReviewTestIdea {
   title: string;
@@ -168,7 +175,11 @@ export interface AIReview {
   source: 'user_imported_json_unverified_provenance';
   verification_status: 'not_independently_verified';
   tests_executed: false;
-  schema_version: 'shipsafe.ai-review.v1';
+  schema_version: 'shipsafe.ai-review.v1' | 'shipsafe.ai-review.v2';
+  /** v2 only: what the review says it was made for (checked against the scan on import). */
+  reviewed_source?: { provider: string | null; repository_id: string | null; pull_request_id: string | null; head_commit: string | null };
+  /** v2 only: what the reviewer could not see. */
+  missing_context?: string[];
   scan_id: string;
   context_digest: string;
   summary: string;

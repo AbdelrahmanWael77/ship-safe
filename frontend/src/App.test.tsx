@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event'
 import App from './App'
 import { networkDown, stubApi } from './test/api'
 import type { Routes } from './test/api'
+import type { AIReview } from './types'
 import { SCAN_ID, demoHistory, demoReport, demoRoutes, pullRequestDetail, pullRequestHistoryItem, pullRequestScanReport, pullRequestsBeforeScan, repositories, statusConfigured, statusNotConfigured, storedScanReport } from './test/fixtures'
 
 const STATUS = '/api/bitbucket/status'
@@ -233,5 +234,51 @@ describe('Claude review package export', () => {
     await userEvent.click(box)
     expect(screen.getByRole('link', { name: /Download handoff ZIP/ })).toHaveAttribute('href', `/api/scans/${report.id}/ai/handoff?acknowledge_source_sharing=true`)
     expect(document.querySelector('.alert-error')).toBeNull()
+  })
+})
+
+describe('imported Claude review (schema v2)', () => {
+  const reviewV2 = (): AIReview => ({
+    id: 'r1', imported_at: '2026-11-13T10:00:00+00:00', source: 'user_imported_json_unverified_provenance',
+    verification_status: 'not_independently_verified', tests_executed: false, schema_version: 'shipsafe.ai-review.v2',
+    scan_id: report.id, context_digest: '0'.repeat(64), summary: 'Synthetic fixture review.', recommendation: 'manual_review',
+    findings: [{
+      id: 'F1', status: 'suspected', title: 'Ownership guard appears removed', severity: 'high', category: 'Authorization',
+      file: report.files[0].path, line: null, evidence: 'guard removed', rationale: 'The check is gone from the diff.',
+      recommendation: 'Restore the check.', confidence: 'medium', related_static_finding_ids: [],
+      suggested_validation: 'Read another user’s invoice as a second user; expect a refusal.',
+      proposed_patch: '+    require_owner(user)\n<img src=x onerror="window.__xss = 1">',
+    }],
+    test_ideas: [], limitations: ['No tests were executed.'], missing_context: ['Callers were not included.'],
+  })
+
+  test('shows the id, how to validate, the proposed patch as inert text, and the missing context, all as unverified', async () => {
+    await start({ [`/api/scans/${report.id}/ai/reviews`]: { body: [reviewV2()] } })
+    await userEvent.click(primaryNav().getByRole('button', { name: /Claude Review/ }))
+
+    expect(await screen.findByText('Ownership guard appears removed')).toBeVisible()
+    expect(screen.getByText('F1')).toBeVisible()
+    expect(screen.getByText('SUSPECTED · UNVERIFIED')).toBeVisible()
+    expect(screen.getByText('UNVERIFIED AI SUGGESTIONS')).toBeVisible()
+    expect(screen.getByText(/How to validate \(not done\)/)).toBeVisible()
+    expect(screen.getByText(/Read another user’s invoice/)).toBeVisible()
+    expect(screen.getByText(/Proposed patch · unverified · not applied by ShipSafe/)).toBeVisible()
+    expect(screen.getByText(/require_owner\(user\)/)).toBeVisible()
+    expect(screen.getByText('Callers were not included.')).toBeVisible()
+    // Imported text is rendered as text: no element is created from it.
+    expect(document.querySelector('.ai-patch img')).toBeNull()
+    expect((window as unknown as { __xss?: number }).__xss).toBeUndefined()
+  })
+
+  test('a v1 review still renders, without the v2-only sections', async () => {
+    const { missing_context: _m, ...rest } = reviewV2()
+    const { id: _i, status: _s, suggested_validation: _v, proposed_patch: _p, ...finding } = rest.findings[0]
+    await start({ [`/api/scans/${report.id}/ai/reviews`]: { body: [{ ...rest, schema_version: 'shipsafe.ai-review.v1', findings: [finding] }] } })
+    await userEvent.click(primaryNav().getByRole('button', { name: /Claude Review/ }))
+    expect(await screen.findByText('Ownership guard appears removed')).toBeVisible()
+    expect(screen.getByText('SUSPECTED · UNVERIFIED')).toBeVisible()
+    expect(screen.queryByText(/How to validate/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Proposed patch/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Context the reviewer did not have/)).not.toBeInTheDocument()
   })
 })

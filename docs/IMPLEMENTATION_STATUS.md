@@ -9,11 +9,19 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 - **Last updated:** 2026-11-13
 
 ### Phase 3 task list (order; one task at a time)
-1. [x] Trusted identity + minimal review package (**uncommitted** on `feat/p3-review-package`, cut from `74661f4`)
-2. [ ] Claude Code review prompt/schema (finding ID, suspected status, suggested validation, optional patch, missing context) — next
-3. [ ] Strict import and history (repository / PR / head SHA checks, duplicate imports, review stale when the PR head moves)
+1. [x] Trusted identity + minimal review package (committed `d0d19d2` on `feat/p3-review-package`, cut from `74661f4`)
+2. [x] Claude Code review prompt/schema v2 (**uncommitted** on `feat/p3-review-package`)
+3. [ ] Strict import and history (duplicate imports, review stale when the PR head moves, stored package id) — next
 4. [ ] Functional UX (AI vs static side by side, previous reviews, stale warning)
 5. [ ] Operating model documentation for the Team subscription
+
+### Phase 3 task 2 — done 2026-11-13 (Windows 11, Python from `.venv`, Node 24.22.2)
+- **What changed:** review schema `shipsafe.ai-review.v2`. Each finding has `id` (unique in the review), `status` fixed to `"suspected"`, `suggested_validation`, optional `proposed_patch` (stored as text, never applied). The review has `reviewed_source` (provider, repository, pull request, head commit; must equal the scan's, else 409) and `missing_context`. The response template now asks for v2 with the binding pre-filled; v1 reviews are still accepted. The instructions name the review areas (security, authorization, API compatibility, money/data integrity, validation, exception handling, affected modules, missing tests) and forbid claims of executed commands or tests. Neither schema can express "verified", test results or commands run (rejected, 422).
+- **Bug found and fixed while building it:** the echoed identity was first named `source` and overwrote the saved review's provenance marker (`source: user_imported_json_unverified_provenance`). It is `reviewed_source`; tests assert the marker survives and cannot be supplied.
+- **UI:** the Claude Review cards show the finding id, a SUSPECTED · UNVERIFIED pill, "How to validate (not done)", the proposed patch as inert text labelled unverified and not applied, and "Context the reviewer did not have".
+- **Files:** `backend/app/ai_handoff.py`, `backend/app/main.py`, `backend/tests/test_review_schema_v2.py` (new, 27 tests), `test_bitbucket_api.py` (1 test), `frontend/src/types.ts`, `App.tsx`, `App.test.tsx` (2 tests), `bitbucket.css`, `docs/CLAUDE-CODE-HANDOFF.md`.
+- **Tests:** `cd backend && ..\.venv\Scripts\python -m pytest -q` → 284 passed, 1 warning; `cd frontend && npm test` → 105 passed (7 files); `npm run build` → ✓.
+- **Limits / NOT TESTED:** only synthetic JSON fixtures; no real Claude Code session has produced a v2 review, so whether Claude follows the instructions and template is unverified. Not viewed in a browser.
 
 ### Phase 3 task 1 — done 2026-11-13 (Windows 11, Python from `.venv`, Node 24.22.2)
 - **What changed:** the review package (`GET /api/scans/{id}/ai/handoff`) now carries `review_context.source` (provider, repository, pull request, full base and head commits, comparison) and the context digest covers it; a `PACKAGE.json` manifest (format `shipsafe.review-package.v2`, new package id per export, digest, incomplete / omitted / truncated counts); best-effort secret redaction of patches and finding evidence, reported as a limitation; a 1 MiB context limit that drops the largest patches and marks them; HTTP 428 unless `acknowledge_source_sharing=true` for any scan that is not the synthetic demo; `GET …/ai/context` adds `acknowledgement_required`. The dashboard's Claude Review page shows a confirmation checkbox when required (also when it cannot tell).

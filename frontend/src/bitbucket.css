@@ -82,3 +82,7 @@
 .ai-share-ack{display:flex;gap:9px;align-items:flex-start;font-size:11px;line-height:1.55;color:#fbc579;margin:10px 0}
 .ai-share-ack input{margin-top:2px;flex:none}
 .ai-action:disabled{opacity:.5;cursor:default}
+.ai-validation{margin-top:10px}
+.ai-validation p{margin:5px 0 0;font-size:11.5px;line-height:1.6;color:#b3c3d4}
+.ai-patch pre{margin:6px 0 0;font:11px/1.5 Consolas,monospace;white-space:pre-wrap;word-break:break-word;color:#cfe0f5;max-height:260px;overflow:auto}
+.ai-missing-head{margin-top:16px}

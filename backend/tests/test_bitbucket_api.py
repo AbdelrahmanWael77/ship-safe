@@ -305,6 +305,26 @@ def test_pull_request_review_round_trip_and_the_digest_survives_the_head_moving(
     assert client.get(f"/api/scans/{report['id']}").json()["findings"] == report["findings"]
 
 
+def test_pull_request_v2_review_must_echo_the_pull_request_and_head_commit(make_client):
+    client = make_client(bitbucket())
+    report = client.post(f"{PR_URL}/scans").json()
+    template = json.loads(review_package(client, report["id"])["response-template.json"])
+    binding = report["binding"]
+    assert template["schema_version"] == "shipsafe.ai-review.v2"
+    assert template["reviewed_source"] == {"provider": "bitbucket-cloud", "repository_id": "acme/ledger",
+                                  "pull_request_id": "7", "head_commit": binding["head_commit"]}
+    review = {**template, "summary": "Synthetic fixture review of the mocked pull request; nothing was executed.",
+              "findings": [], "test_ideas": [], "missing_context": ["The full files were not included."]}
+    url = f"/api/scans/{report['id']}/ai/reviews"
+    for field, value in (("head_commit", "f" * 40), ("pull_request_id", "8"), ("repository_id", "acme/other")):
+        wrong = client.post(url, json={**review, "reviewed_source": {**review["reviewed_source"], field: value}})
+        assert wrong.status_code == 409 and "does not match this scan" in wrong.json()["detail"], field
+    saved = client.post(url, json=review)
+    assert saved.status_code == 201, saved.text
+    assert saved.json()["reviewed_source"] == template["reviewed_source"] and saved.json()["tests_executed"] is False
+    assert saved.json()["source"] == "user_imported_json_unverified_provenance"
+
+
 def test_local_scan_responses_carry_a_direct_binding_with_full_shas(make_client, no_bitbucket_env):
     client = make_client()
     report = client.post("/api/scans", json={"base_ref": "main", "head_ref": "feature/docs-only"}).json()

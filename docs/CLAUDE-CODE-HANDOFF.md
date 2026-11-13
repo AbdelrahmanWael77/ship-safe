@@ -27,7 +27,12 @@ Review context can be incomplete: diff excerpts are capped at 140 lines per file
 
 ## Output schema
 
-The generated `claude-review.json` must contain:
+New packages ask for `shipsafe.ai-review.v2`; follow the `response-template.json` in the package. Compared with the v1 example below, v2 adds:
+
+- on the review: `reviewed_source` (`provider`, `repository_id`, `pull_request_id`, `head_commit`, copied unchanged from the template; a review made for another repository, pull request or commit is refused) and `missing_context` (a list of what the reviewer could not see);
+- on each finding: `id` (unique within the review, for example `F1`), `status` (always `"suspected"`), `suggested_validation` (the check a human should run), and optional `proposed_patch` (text only; ShipSafe stores it and never applies it).
+
+Neither schema has a way to say a finding is verified, that commands or tests were run, or what their results were; such fields are rejected. v1 reviews (the example below) are still accepted.
 
 ```json
 {

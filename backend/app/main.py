@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, ValidationError
 
-from .ai_handoff import AIReviewImport, MAX_IMPORT_BYTES, context_digest, handoff_zip, saved_review, validate_review_binding
+from .ai_handoff import MAX_IMPORT_BYTES, parse_review, context_digest, handoff_zip, saved_review, validate_review_binding
 from .config import load_settings
 from .db import BINDING_COLUMNS, binding, insert_scan, migrate, pull_request_scans, scanned_pull_requests, session, sync_stale
 from .demo_seed import DEMO_BRANCHES, ensure_demo_repo
@@ -272,7 +272,7 @@ def create_app(
             parts.append(part)
         try:
             data = json.loads(b"".join(parts))
-            validated = AIReviewImport.model_validate(data)
+            validated = parse_review(data)
         except (ValueError, ValidationError, RecursionError) as exc:
             raise HTTPException(422, detail=f"Invalid Claude review JSON: {str(exc)[:700]}") from exc
         try:

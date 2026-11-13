@@ -18,6 +18,10 @@ from .ai_handoff import MAX_IMPORT_BYTES, parse_review, review_content_digest, c
 from .config import load_settings
 from .db import BINDING_COLUMNS, binding, insert_scan, migrate, pull_request_scans, scanned_pull_requests, session, sync_stale
 from .discovery import discover_tests
+from .proposals import (
+    MAX_REQUEST_BYTES as MAX_PROPOSAL_REQUEST_BYTES, PROPOSAL_COLUMNS, DecisionRequest, ProposalError, ProposalRequest,
+    check_against_tree, insert_decision, insert_proposal, served as served_proposal, validate_content, validate_target_path,
+)
 from .demo_seed import DEMO_BRANCHES, ensure_demo_repo
 from .errors import (
     ChangeTooLarge, ProviderAuthError, ProviderError, ProviderUnavailable, PullRequestNotFound, RefNotFound,
@@ -364,6 +368,99 @@ def create_app(
                 discovery = discover_tests(
                     remote, repository, commit, report, ai_findings=ai_findings, max_files=BITBUCKET_TEST_READS)
         return {"scan_id": scan_id, "ai_review_id": reviews[0]["id"] if reviews else None, **discovery}
+
+    # -- Phase 4 task B: proposed tests and human decisions (nothing is applied or run) --
+
+    def scan_tree(report: dict, source: dict) -> list[str]:
+        """Paths in the repository at the scan's head commit (read-only)."""
+        if source["provider"] == "local-git":
+            try:
+                repository = provider.get_repository(report["repository_path"])
+                return provider.list_files(repository, source["head_commit"])
+            except RepositoryAccessDenied as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            except ScanError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        remote = require_bitbucket()
+        with bitbucket_errors():
+            return remote.list_files(remote.get_repository(source["repository_id"]), source["head_commit"])
+
+    async def limited_json(request: Request, limit: int) -> object:
+        received, parts = 0, []
+        async for part in request.stream():
+            received += len(part)
+            if received > limit:
+                raise HTTPException(413, detail=f"Request is larger than the {limit // 1024} KiB limit")
+            parts.append(part)
+        try:
+            return json.loads(b"".join(parts))
+        except (ValueError, RecursionError) as exc:
+            raise HTTPException(422, detail=f"Invalid JSON: {str(exc)[:300]}") from exc
+
+    def proposal_rows(conn, scan_id: str, proposal_id: str | None = None):
+        sql = f"SELECT {PROPOSAL_COLUMNS} FROM test_proposals WHERE scan_id = ?"
+        args: tuple = (scan_id,)
+        if proposal_id is not None:
+            sql, args = sql + " AND id = ?", (scan_id, proposal_id)
+        return conn.execute(sql + " ORDER BY created_at DESC, rowid DESC LIMIT 100", args).fetchall()
+
+    @app.get("/api/scans/{scan_id}/tests/proposals")
+    def list_test_proposals(scan_id: str):
+        stale = read_scan(scan_id)["binding"]["stale"]
+        with connection() as conn:
+            return [served_proposal(conn, row, scan_stale=stale) for row in proposal_rows(conn, scan_id)]
+
+    @app.post("/api/scans/{scan_id}/tests/proposals", status_code=201)
+    async def create_test_proposal(scan_id: str, request: Request):
+        report, source = review_inputs(scan_id)
+        if not source.get("head_commit") or not source.get("base_commit"):
+            raise HTTPException(409, detail="This scan is not bound to exact commits, so a test cannot be proposed for it. Scan again.")
+        if source["stale"]:
+            raise HTTPException(409, detail="The pull request has new commits since this scan. Scan again and propose the test for the new scan.")
+        data = await limited_json(request, MAX_PROPOSAL_REQUEST_BYTES)
+        try:
+            body = ProposalRequest.model_validate(data)
+            validate_target_path(body.target_path)
+            validate_content(body.content)
+        except ValidationError as exc:
+            raise HTTPException(422, detail=f"Invalid test proposal: {str(exc)[:700]}") from exc
+        except ProposalError as exc:
+            raise HTTPException(exc.status, detail=str(exc)) from exc
+        if body.finding_ref is not None:
+            known = {item["id"] for item in report["findings"]}
+            known |= {str(f["id"]) for review in list_ai_reviews(scan_id) for f in review["findings"] if f.get("id")}
+            if body.finding_ref not in known:
+                raise HTTPException(409, detail=f"Unknown finding for this scan: {body.finding_ref}")
+        tree = scan_tree(report, source)
+        try:
+            check_against_tree(body.target_path, tree)
+            with connection() as conn:
+                proposal_id = insert_proposal(
+                    conn, scan_id=scan_id, request=body, base_commit=source["base_commit"], head_commit=source["head_commit"])
+                return served_proposal(conn, proposal_rows(conn, scan_id, proposal_id)[0], scan_stale=False)
+        except ProposalError as exc:
+            raise HTTPException(exc.status, detail=str(exc)) from exc
+
+    @app.post("/api/scans/{scan_id}/tests/proposals/{proposal_id}/decisions", status_code=201)
+    async def decide_test_proposal(scan_id: str, proposal_id: str, request: Request):
+        """Record an explicit human decision. Approving does not apply or run anything."""
+        stale = read_scan(scan_id)["binding"]["stale"]
+        data = await limited_json(request, 16 * 1024)
+        try:
+            body = DecisionRequest.model_validate(data)
+        except ValidationError as exc:
+            raise HTTPException(422, detail=f"Invalid decision: {str(exc)[:700]}") from exc
+        with connection() as conn:
+            rows = proposal_rows(conn, scan_id, proposal_id)
+            if not rows:
+                raise HTTPException(404, detail="Test proposal not found for this scan")
+            if stale and body.decision == "approved":
+                raise HTTPException(409, detail="This proposal is stale: the pull request has new commits since its scan. It can be rejected, not approved.")
+            try:
+                insert_decision(conn, proposal_id=proposal_id, request=body)
+            except ProposalError as exc:
+                raise HTTPException(exc.status, detail=str(exc)) from exc
+            return served_proposal(conn, rows[0], scan_stale=stale)
 
     @app.get("/api/scans/{scan_id}/ai/reviews/latest")
     def latest_ai_review(scan_id: str):

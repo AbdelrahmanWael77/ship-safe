@@ -17,6 +17,8 @@ from app.main import create_app
 from app.scanner import git, scan_repository
 
 V1 = db.MIGRATIONS[:1]
+# These tests are about migration 2 itself, so they stop there. Later migrations: their own test files.
+V2 = db.MIGRATIONS[:2]
 OLD_COLUMNS = ["id", "created_at", "report_json"]
 NEW_COLUMNS = ["provider", "repository_id", "pull_request_id", "base_commit", "head_commit", "stale_at"]
 SHA_A, SHA_B, SHA_C = "a" * 40, "b" * 40, "c" * 40
@@ -63,7 +65,7 @@ def stored(db_file):
 
 def test_fresh_database_reaches_version_2_with_the_new_columns(tmp_path):
     db_file = tmp_path / "scans.db"
-    assert db.migrate(db_file) == db.LATEST_VERSION == 2
+    assert db.migrate(db_file, V2) == 2
     assert columns(db_file) == OLD_COLUMNS + NEW_COLUMNS
     assert ("idx_scans_pull_request",) in query(db_file, "SELECT name FROM sqlite_master WHERE type = 'index'")
 
@@ -73,7 +75,7 @@ def test_version_1_rows_survive_migration_2_byte_for_byte(tmp_path, demo):
     before = stored(db_file)
     assert columns(db_file) == OLD_COLUMNS
 
-    assert db.migrate(db_file) == 2
+    assert db.migrate(db_file, V2) == 2
 
     assert stored(db_file) == before
     assert columns(db_file, "ai_reviews") == ["id", "scan_id", "imported_at", "review_json"]
@@ -81,7 +83,7 @@ def test_version_1_rows_survive_migration_2_byte_for_byte(tmp_path, demo):
     assert query(db_file, "SELECT DISTINCT provider, repository_id, pull_request_id, base_commit, head_commit, stale_at FROM scans") == [
         ("local-git", None, None, None, None, None)
     ]
-    assert db.migrate(db_file) == 2  # idempotent
+    assert db.migrate(db_file, V2) == 2  # idempotent
     assert stored(db_file) == before
 
 
@@ -104,7 +106,7 @@ def test_v0_2_database_goes_straight_to_version_2_and_stays_usable_through_the_a
         served = {"summary": "x", "scan_id": report["id"], "scan_binding": legacy}
         assert client.get(f"/api/scans/{report['id']}/ai/reviews").json() == [served]
         assert client.get(f"/api/scans/{report['id']}/ai/reviews/latest").json() == served
-    assert db.schema_version(db_file) == 2
+    assert db.schema_version(db_file) == db.LATEST_VERSION  # the API applies every migration
     assert stored(db_file) == before
 
 
@@ -118,19 +120,19 @@ def test_migration_2_failure_rolls_back_to_version_1(tmp_path, demo):
     assert db.schema_version(db_file) == 1
     assert columns(db_file) == OLD_COLUMNS
     assert stored(db_file) == before
-    assert db.migrate(db_file) == 2  # the real migration still applies afterwards
+    assert db.migrate(db_file, V2) == 2  # the real migration still applies afterwards
     assert stored(db_file) == before
 
 
 def test_database_newer_than_version_2_is_still_refused(tmp_path):
     db_file = tmp_path / "scans.db"
-    db.migrate(db_file)
+    db.migrate(db_file, V2)
     conn = sqlite3.connect(db_file)
     conn.execute("PRAGMA user_version = 3")
     conn.commit()
     conn.close()
     with pytest.raises(db.SchemaVersionError):
-        db.migrate(db_file)
+        db.migrate(db_file, V2)
     assert db.schema_version(db_file) == 3
 
 

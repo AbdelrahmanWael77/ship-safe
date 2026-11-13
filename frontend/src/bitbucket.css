@@ -107,3 +107,27 @@
 .discovery-gaps ul,.discovery-heuristics ul{margin:6px 0 0;padding-left:18px}
 .discovery-gaps strong{color:#fbc579;font-weight:650}
 .discovery-heuristics summary{cursor:pointer;color:#67e3cf;font-weight:700}
+.proposals-panel{margin-top:17px}
+.proposals-panel .panel-head h3,.proposal h4{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0}
+.proposals-panel>.bb-state{margin:0 21px 17px;padding:14px 0}
+.proposal{border-top:1px solid #29384c;padding:16px 21px}
+.proposal-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap}
+.proposal h4{font-size:12.5px;color:#eaf3ff}
+.proposal p{margin:6px 0 0;font-size:11.5px;line-height:1.6;color:#a9bad0}
+.proposal code{font-size:10.5px;color:#cfe0f5;background:#16263c;border:1px solid #2b3a51;border-radius:5px;padding:1px 5px}
+.proposal-blocked{color:#fbc579!important}
+.proposal-diff{margin:12px 0}
+.proposal-diff .code-lines{max-height:320px;overflow:auto}
+.proposal-decisions ol{margin:6px 0 10px;padding-left:18px;font-size:11.5px;line-height:1.7;color:#b3c3d4}
+.proposal-decide{display:flex;gap:9px;flex-wrap:wrap;margin:8px 0}
+.proposal-decide input,.proposal-form input,.proposal-form select,.proposal-form textarea{background:#0b1726;border:1px solid #34465d;border-radius:8px;color:#dbe7f5;font-size:12px;padding:9px 11px;min-width:0}
+.proposal-decide input{flex:1;min-width:150px}
+.proposal-decide button:disabled,.proposal-head button:disabled{opacity:.55;cursor:not-allowed}
+.proposal-add{border-top:1px solid #29384c;padding:14px 21px}
+.proposal-add summary{cursor:pointer;color:#67e3cf;font-weight:700;font-size:12px}
+.proposal-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
+.proposal-form label{display:flex;flex-direction:column;gap:6px}
+.proposal-form-wide{grid-column:1/-1}
+.proposal-form textarea{font-family:Consolas,monospace;resize:vertical}
+.proposal-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+@media(max-width:800px){.proposal-form{grid-template-columns:1fr}}

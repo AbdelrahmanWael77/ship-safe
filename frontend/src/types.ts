@@ -227,3 +227,36 @@ export interface TestDiscovery {
   heuristics: string[];
   disclaimer: string;
 }
+
+// -- Phase 4 task B: proposed tests and human decisions (never applied or run here)
+export interface TestProposalDecision {
+  id: string;
+  decision: 'approved' | 'rejected';
+  decided_at: string;
+  /** Self-declared name: ShipSafe has no authentication. */
+  decided_by: string;
+  note: string | null;
+}
+export interface TestProposal {
+  id: string;
+  scan_id: string;
+  created_at: string;
+  target_path: string;
+  /** Untrusted test source. Render as text only. */
+  content: string;
+  content_digest: string;
+  origin: 'human' | 'imported_ai_review';
+  finding_ref: string | null;
+  rationale: string | null;
+  base_commit: string;
+  head_commit: string;
+  decisions: TestProposalDecision[];
+  status: 'pending' | 'approved' | 'rejected';
+  /** The scan's pull request has new commits. */
+  stale: boolean;
+  /** Approved and not stale. Says the human gate is passed, not that anything ran. */
+  eligible_to_run: boolean;
+  applied: false;
+  executed: false;
+  identity_note: string;
+}

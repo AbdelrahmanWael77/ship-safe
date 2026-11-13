@@ -86,8 +86,12 @@ describe('dashboard', () => {
     mockMode()
     const api = stubApi(demoRoutes())
     render(<App />)
-    // The mock status says "configured", so the dashboard starts in live mode (no demo scan).
-    await screen.findByRole('heading', { name: 'No pull request scanned yet' })
+    // Mock mode fakes only the Bitbucket screens: the invented "configured" status must not
+    // switch the dashboard to live mode, so the synthetic demo stays available (docs/DEMO_SCRIPT.md)
+    // and invented data is never labelled as live Bitbucket.
+    await screen.findByRole('heading', { name: 'Release overview' })
+    expect(screen.getByText('LOCAL DEMO')).toBeVisible()
+    expect(screen.queryByText(/BITBUCKET LIVE/)).not.toBeInTheDocument()
     const banner = () => screen.getByText('MOCK DATA', { selector: '.mock-banner strong' })
     expect(banner()).toBeVisible()
 

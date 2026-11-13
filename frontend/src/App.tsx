@@ -132,7 +132,10 @@ export default function App() {
   useEffect(() => {
     if (bitbucketStatus.loading || started.current) return
     started.current = true
-    const live = bitbucketStatus.data?.configured === true
+    // Mock mode fakes only the Bitbucket screens: its invented "configured" status
+    // must not switch the dashboard to live mode, which would hide the synthetic
+    // demo and label invented data as live Bitbucket.
+    const live = !isMockMode() && bitbucketStatus.data?.configured === true
     setMode(live ? 'live' : 'demo')
     const initLive = async () => {
       try {

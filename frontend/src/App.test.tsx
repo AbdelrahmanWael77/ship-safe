@@ -460,6 +460,23 @@ describe('Claude Review page: history, side by side, import status', () => {
     expect(document.querySelector('.alert-error')).toBeNull()
   })
 
+  test('the same file can be chosen again after an import (for example to retry it)', async () => {
+    const api = await openPage({ [`POST ${reviews}`]: [{ status: 201, body: base() }, { status: 409, body: { detail: 'This review was already imported for this scan. Nothing was added.' } }] })
+    await screen.findByRole('heading', { name: 'No Claude review imported yet' })
+    const file = new File([JSON.stringify({ any: 'json' })], 'claude-review.json', { type: 'application/json' })
+    const input = () => document.querySelector('input[type="file"]') as HTMLInputElement
+    await userEvent.upload(input(), file)
+    await userEvent.click(screen.getByRole('button', { name: /Import review/ }))
+    await screen.findByText(/Imported for scan/)
+    expect(input().value).toBe('')  // cleared, so choosing the same file fires a change again
+    await userEvent.upload(input(), file)
+    const button = screen.getByRole('button', { name: /Import review/ })
+    expect(button).toBeEnabled()
+    await userEvent.click(button)
+    expect(await screen.findByText(/already imported for this scan/)).toBeVisible()
+    expect(api.count(`POST ${reviews}`)).toBe(2)
+  })
+
   test.each([
     [409, 'This review was already imported for this scan. Nothing was added.'],
     [409, 'Review scan ID or context digest does not match this scan. Export a fresh handoff bundle.'],
@@ -622,5 +639,37 @@ describe('AI review results on Risk findings and Test intelligence', () => {
     expect(screen.queryByRole('heading', { name: 'No risk patterns detected' })).not.toBeInTheDocument()
     await go(/Test intelligence/)
     expect(await screen.findByText(/Static rules cover Python files only/)).toBeVisible()
+  })
+})
+
+
+describe('Claude Review: copy the Claude Code instruction', () => {
+  const copyButton = () => screen.getByRole('button', { name: 'Copy the Claude Code instruction' })
+  const openReview = async () => { await userEvent.click(primaryNav().getByRole('button', { name: /Claude Review/ })) }
+
+  test('copies the instruction text', async () => {
+    await start()
+    const writeText = vi.fn(async (_text: string) => {})
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    await openReview()
+    await userEvent.click(copyButton())
+    expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/^Read REVIEW_INSTRUCTIONS\.md and review-input\.json/))
+    expect(screen.queryByText(/Copy failed/)).not.toBeInTheDocument()
+  })
+
+  test('a refused clipboard shows a message instead of throwing', async () => {
+    await start()
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: vi.fn(async () => { throw new DOMException('Write permission denied.', 'NotAllowedError') }) } })
+    await openReview()
+    await userEvent.click(copyButton())
+    expect(await screen.findByText(/Copy failed/)).toBeVisible()
+  })
+
+  test('no clipboard at all (page not on localhost or https) shows the same message', async () => {
+    await start()
+    vi.stubGlobal('navigator', { ...navigator, clipboard: undefined })
+    await openReview()
+    await userEvent.click(copyButton())
+    expect(await screen.findByText(/Copy failed/)).toBeVisible()
   })
 })

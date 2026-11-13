@@ -188,3 +188,6 @@
 .ai-provider-select select{min-width:200px}
 .bb-ai-usage{margin:4px 0 0;color:#8fb4ff;font-size:12px}
 .ai-provider-pills{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+
+/* Claude Review: clipboard copy failure next to the CLI hint */
+.copy-failed{display:block;margin-top:6px;font-size:11px;color:#fbc579}

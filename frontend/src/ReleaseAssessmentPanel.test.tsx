@@ -152,3 +152,23 @@ describe('dashboard', () => {
     expect(document.querySelector('.alert-error')).toBeNull()
   })
 })
+
+describe('manual QC tests in the assessment', () => {
+  test('tester results are shown as self-declared, with the failed cases, and not as executed tests', async () => {
+    open(assessment({ manual_tests: { label: 'RECORDED BY TESTERS (self-declared; not observed by ShipSafe)', suite_id: 's1', created_at: '2026-11-13T11:00:00+00:00', total: 3,
+      counts: { passed: 1, failed: 1, blocked: 0, not_run: 1 },
+      failed: [{ id: 'TC2', title: 'Double tap sends one request', priority: 'high', finding_id: 'F1', bug_title_if_fails: 'Save sends duplicate requests', tester: 'Mona', note: 'Two toasts' }] } }))
+    const region = within(await screen.findByRole('region', { name: 'Manual QC tests' }))
+    expect(region.getByText('RECORDED BY TESTERS (self-declared; not observed by ShipSafe)')).toBeVisible()
+    expect(region.getByText('1 passed · 1 failed · 0 blocked · 1 not run')).toBeVisible()
+    expect(region.getByText('TC2 · Save sends duplicate requests')).toBeVisible()
+    expect(region.getByText(/failed per Mona/)).toBeVisible()
+    expect(within(screen.getByRole('region', { name: 'Test evidence' })).getByText('0 executed')).toBeVisible()
+  })
+
+  test('without a suite there is no manual tests section', async () => {
+    open(assessment())
+    await screen.findByRole('region', { name: 'Test evidence' })
+    expect(screen.queryByRole('region', { name: 'Manual QC tests' })).toBeNull()
+  })
+})

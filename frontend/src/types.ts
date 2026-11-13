@@ -340,5 +340,30 @@ export interface ReleaseAssessment {
       items: { id: string; target_path: string; status: string; finding_ref: string | null; origin: string; decisions: { decision: string; decided_by: string; decided_at: string; note: string | null }[] }[] };
     runs: { requested: number; blocked: number; executed: number; confirmed_regressions: number; items: Partial<TestRun>[] };
   };
+  /** Manual QC results of the newest test suite of the scan, as testers recorded them. */
+  manual_tests?: null | {
+    label: string; suite_id: string; created_at: string; total: number;
+    counts: Record<QcStatus, number>;
+    failed: { id: string; title: string; priority: string; finding_id: string | null; bug_title_if_fails: string; tester: string | null; note: string | null }[];
+  };
   unknowns: string[];
+}
+
+export type QcStatus = 'passed' | 'failed' | 'blocked' | 'not_run'
+
+export interface QcResult { status: QcStatus; tester: string; note: string | null; recorded_at: string }
+
+/** A manual test case written by an AI model from an AI review finding. ShipSafe never runs it. */
+export interface QcTestCase {
+  id: string; title: string; priority: 'critical' | 'high' | 'medium' | 'low'; area: string;
+  finding_id: string | null; file: string | null;
+  preconditions: string[]; test_data: string[]; steps: string[]; expected: string; bug_title_if_fails: string;
+  status: QcStatus; result: QcResult | null; results: QcResult[];
+}
+
+export interface QcTestSuite {
+  id: string; scan_id: string; review_id: string; created_at: string; review_origin: string | null;
+  cases: QcTestCase[]; counts: Record<QcStatus, number>; total: number; limitations: string[];
+  executed_by_shipsafe: false;
+  generator: { provider: AIProviderName; model: string; usage?: { input_tokens: number; output_tokens: number; reasoning_tokens: number }; duration_ms?: number; estimated_cost_usd?: number };
 }

@@ -24,6 +24,7 @@ from .config import load_settings
 from .db import BINDING_COLUMNS, binding, insert_scan, migrate, pull_request_scans, scanned_pull_requests, session, sync_stale
 from .assessment import assess, render_markdown
 from .discovery import discover_tests
+from . import qc_tests
 from .runner import EXECUTION_UNAVAILABLE, Runner, UnavailableRunner, blocked_reason, record_blocked_run, runs_of
 from .proposals import (
     MAX_REQUEST_BYTES as MAX_PROPOSAL_REQUEST_BYTES, PROPOSAL_COLUMNS, DecisionRequest, ProposalError, ProposalRequest,
@@ -110,6 +111,13 @@ class GeminiReviewRequest(BaseModel):
 
 class ModelReviewRequest(BaseModel):
     provider: Literal["gemini", "openai"]
+    acknowledge_source_sharing: bool = False
+
+
+class QcSuiteRequest(BaseModel):
+    provider: Literal["gemini", "openai"]
+    #: The AI review to write test cases from; the newest review of the scan when omitted.
+    review_id: str | None = Field(default=None, max_length=64)
     acknowledge_source_sharing: bool = False
 
 
@@ -613,6 +621,97 @@ def create_app(
             run = next(item for item in runs_of(conn, proposal_id) if item["id"] == run_id)
         return JSONResponse(status_code=503, content={"detail": reason, "code": EXECUTION_UNAVAILABLE, "run": run})
 
+    # -- Phase 6: manual QC test cases from an AI review, and tester results --------
+
+    def suite_rows(conn, scan_id: str, suite_id: str | None = None):
+        sql, args = "SELECT suite_json FROM qc_test_suites WHERE scan_id = ?", (scan_id,)
+        if suite_id is not None:
+            sql, args = sql + " AND id = ?", (scan_id, suite_id)
+        return [json.loads(row["suite_json"]) for row in conn.execute(sql + " ORDER BY created_at DESC, rowid DESC LIMIT 20", args)]
+
+    @app.post("/api/scans/{scan_id}/qc/test-suites", status_code=201)
+    def create_qc_suite(scan_id: str, body: QcSuiteRequest):
+        """Ask an AI model to write manual test cases from one AI review of this scan.
+        Same consent rule as an AI review: non-demo code is sent only when acknowledged."""
+        client, meta = ai_clients[body.provider], ai_meta[body.provider]
+        if client is None:
+            raise GeminiError(503, f"{body.provider}_not_configured",
+                              f"{meta['label']} is not configured. Set {meta['env']} on the server, then restart the API.")
+        report, source = review_inputs(scan_id)
+        reviews = list_ai_reviews(scan_id)
+        review = next((item for item in reviews if item["id"] == body.review_id), None) if body.review_id else (reviews[0] if reviews else None)
+        if review is None:
+            raise HTTPException(409, detail="This scan has no AI review to write test cases from. Run an AI review of the scan first."
+                                if not body.review_id else "That AI review does not belong to this scan.")
+        if not review.get("findings"):
+            raise HTTPException(409, detail="The AI review proposed no findings, so there is nothing to write test cases for.")
+        if needs_acknowledgement(report, source) and not body.acknowledge_source_sharing:
+            raise HTTPException(
+                status_code=428,
+                detail="This scan contains source code that is not the synthetic demo. Confirm that you are allowed "
+                       f"to share it with {meta['label']} (acknowledge_source_sharing: true) to write test cases.",
+            )
+        started = time.monotonic()
+        raw, usage = client.review(qc_tests.qc_context(review_context(report, source), review), qc_tests.TASK)
+        cases, dropped = qc_tests.build_cases(raw, review)
+        if not cases:
+            raise GeminiError(502, f"{body.provider}_no_test_cases",
+                              f"{client.label} returned no usable test case ({dropped} dropped as incomplete). Try again.")
+        generator = {"provider": body.provider, "model": client.model, "usage": usage,
+                     "duration_ms": round((time.monotonic() - started) * 1000)}
+        if body.provider == "openai":
+            cost = openai_cost(client.model, usage)
+            if cost is not None:
+                generator.update(estimated_cost_usd=cost, prices_as_of=OPENAI_PRICES_AS_OF)
+        suite = qc_tests.new_suite(scan_id, review, cases, dropped, generator)
+        with connection() as conn:
+            qc_tests.insert_suite(conn, suite)
+            return qc_tests.served_suite(conn, suite)
+
+    @app.get("/api/scans/{scan_id}/qc/test-suites")
+    def list_qc_suites(scan_id: str):
+        read_scan(scan_id)
+        with connection() as conn:
+            return [qc_tests.served_suite(conn, suite) for suite in suite_rows(conn, scan_id)]
+
+    def one_suite(conn, scan_id: str, suite_id: str) -> dict:
+        found = suite_rows(conn, scan_id, suite_id)
+        if not found:
+            raise HTTPException(404, detail="Test suite not found for this scan")
+        return found[0]
+
+    @app.post("/api/scans/{scan_id}/qc/test-suites/{suite_id}/results", status_code=201)
+    async def record_qc_result(scan_id: str, suite_id: str, request: Request):
+        """Record what a tester says happened when they executed a case. Nothing is run here."""
+        read_scan(scan_id)
+        data = await limited_json(request, 16 * 1024)
+        try:
+            body = qc_tests.ResultRequest.model_validate(data)
+            tester = clean_name(body.tester)
+        except ValidationError as exc:
+            raise HTTPException(422, detail=f"Invalid result: {str(exc)[:500]}") from exc
+        except ProposalError as exc:
+            raise HTTPException(exc.status, detail=str(exc).replace("decided_by", "tester")) from exc
+        with connection() as conn:
+            suite = one_suite(conn, scan_id, suite_id)
+            if not any(case["id"] == body.case_id for case in suite["cases"]):
+                raise HTTPException(404, detail=f"Unknown test case {body.case_id} in this suite")
+            qc_tests.insert_result(conn, suite_id, body, tester)
+            return qc_tests.served_suite(conn, suite)
+
+    @app.get("/api/scans/{scan_id}/qc/test-suites/{suite_id}/export")
+    def export_qc_suite(scan_id: str, suite_id: str, format: str = Query(default="csv", pattern="^(csv|markdown)$")):
+        scan = read_scan(scan_id)
+        with connection() as conn:
+            suite = qc_tests.served_suite(conn, one_suite(conn, scan_id, suite_id))
+        name = f"shipsafe-test-cases-{scan_id[:8]}"
+        if format == "csv":
+            # UTF-8 BOM so Excel opens Arabic and other non-ASCII text correctly.
+            return Response(content="\ufeff" + qc_tests.suite_csv(suite), media_type="text/csv; charset=utf-8",
+                            headers={"Content-Disposition": f'attachment; filename="{name}.csv"', "Cache-Control": "no-store"})
+        return Response(content=qc_tests.suite_markdown(suite, scan), media_type="text/markdown; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{name}.md"', "Cache-Control": "no-store"})
+
     # -- Phase 5: evidence-based release assessment (read-only; adds nothing to the evidence) --
 
     def build_assessment(scan_id: str) -> dict:
@@ -622,7 +721,9 @@ def create_app(
         with connection() as conn:
             for proposal in proposals:
                 proposal["runs"] = runs_of(conn, proposal["id"])
-        return assess(report, source, reviews, proposals)
+            suites = suite_rows(conn, scan_id)
+            suite = qc_tests.served_suite(conn, suites[0]) if suites else None
+        return assess(report, source, reviews, proposals, suite)
 
     @app.get("/api/scans/{scan_id}/assessment")
     def release_assessment(scan_id: str):

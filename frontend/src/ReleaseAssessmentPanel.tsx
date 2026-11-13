@@ -100,6 +100,16 @@ export function ReleaseAssessmentPanel({ scanId }: { scanId: string }) {
           </div>
         </div>
 
+        {result.manual_tests && <div className="panel" role="region" aria-label="Manual QC tests">
+          <div className="panel-head"><div><h3>Manual QC tests</h3><p>{result.manual_tests.label}</p></div><Pill kind={result.manual_tests.counts.failed ? 'danger' : 'muted'}>{result.manual_tests.counts.failed} failed</Pill></div>
+          <div className="assessment-body">
+            <div className="settings-row"><span>Test cases (AI-written, run by people)</span><strong>{result.manual_tests.total}</strong></div>
+            <div className="settings-row"><span>Results recorded</span><strong>{result.manual_tests.counts.passed} passed · {result.manual_tests.counts.failed} failed · {result.manual_tests.counts.blocked} blocked · {result.manual_tests.counts.not_run} not run</strong></div>
+            {result.manual_tests.failed.map(item => <div className="ai-compare-item" key={item.id}><Severity level={item.priority} /><span><strong>{item.id} · {item.bug_title_if_fails || item.title}</strong><small>{item.title}{item.finding_id ? ` · finding ${item.finding_id}` : ''}{item.tester ? ` · failed per ${item.tester}` : ''}{item.note ? ` · ${item.note}` : ''}</small></span></div>)}
+            <p className="muted-small">ShipSafe did not execute these tests and did not observe these results.</p>
+          </div>
+        </div>}
+
         <div className="panel" role="region" aria-label="What is not known">
           <div className="panel-head"><div><h3>What is not known</h3><p>Read this before deciding</p></div></div>
           <ul className="assessment-unknowns">{result.unknowns.map((item, index) => <li key={index}>{item}</li>)}</ul>

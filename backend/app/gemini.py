@@ -17,6 +17,8 @@ verified, and no test is claimed as run.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import hashlib
 import json
 import re
@@ -103,6 +105,17 @@ RESPONSE_SCHEMA: dict[str, Any] = {
 }
 
 
+@dataclass(frozen=True)
+class AITask:
+    """What to ask a model besides a code review: its instructions, the user prompt that
+    precedes the JSON input, and the answer schema in each provider's format."""
+    name: str
+    instruction: str
+    prompt: str
+    gemini_schema: dict
+    openai_schema: dict
+
+
 class GeminiError(Exception):
     """An AI review (Gemini, or OpenAI through its subclass) could not be produced.
     Rendered as ``{"detail", "code"}``. Messages never contain the API key or the
@@ -134,17 +147,17 @@ class GeminiClient:
     provider = "gemini"
     label = "Gemini"
 
-    def review(self, context: dict) -> tuple[dict, dict]:
-        """Ask Gemini to review ``context``; returns the parsed JSON object it produced
-        and the token usage Google reported."""
+    def review(self, context: dict, task: AITask | None = None) -> tuple[dict, dict]:
+        """Ask Gemini to review ``context`` (or to do ``task`` with it); returns the parsed
+        JSON object it produced and the token usage Google reported."""
         body = {
-            "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
-            "contents": [{"role": "user", "parts": [{"text": "Review this change. Input JSON:\n"
+            "systemInstruction": {"parts": [{"text": task.instruction if task else SYSTEM_INSTRUCTION}]},
+            "contents": [{"role": "user", "parts": [{"text": (task.prompt if task else "Review this change.") + " Input JSON:\n"
                                                               + json.dumps(context, ensure_ascii=False)}]}],
             "generationConfig": {
                 "temperature": 0.2,
                 "responseMimeType": "application/json",
-                "responseSchema": RESPONSE_SCHEMA,
+                "responseSchema": task.gemini_schema if task else RESPONSE_SCHEMA,
             },
         }
         # Temporary failures ("model is experiencing high demand", 429, timeouts) are retried

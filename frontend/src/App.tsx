@@ -15,6 +15,7 @@ import { api, API_BASE as API, SCAN_LIST_LIMIT, SCAN_LIST_PATH } from './api'
 import { DiffViewer, Empty, FileIcon, FindingCard, Pill, Severity } from './components'
 import { ReleaseAssessmentPanel } from './ReleaseAssessmentPanel'
 import { TestDiscoveryPanel } from './TestDiscoveryPanel'
+import { QcTestCasesPanel } from './QcTestCasesPanel'
 import { TestProposalsPanel } from './TestProposalsPanel'
 import { BitbucketSection } from './bitbucket/BitbucketSection'
 import { getBitbucketStatus, isMockMode } from './bitbucket/client'
@@ -458,6 +459,7 @@ export default function App() {
                 : <p className="small-para ai-test-empty">{aiOfScan ? 'The AI review proposed no test ideas.' : 'Run an AI model review (OpenAI or Gemini) or import a Claude Code review on the Claude Review page; its test ideas appear here.'}</p>}
             </div></div><div className="test-right">{!live && <div className="panel"><div className="panel-head"><div><h3>Run the fixture suite</h3><p>Manual command on trusted code</p></div><Terminal size={18}/></div><div className="terminal-mini"><span className="terminal-dot-row"><i/><i/><i/></span><code>cd backend/demo-repo<br/>python -m pytest -q</code></div><p className="small-para">The fixture's existing happy-path tests intentionally miss the injected regressions. Passing them does not verify the flagged behavior.</p><div className="manual-tag"><LockKeyhole size={14}/> Only run code you explicitly trust.</div></div>}<div className="panel score-note"><ShieldQuestion size={22}/><h3>Evidence over confidence</h3><p>Suggested tests are hypotheses. A confirmed regression requires an executable test that fails before the fix and passes afterward.</p></div></div></div>}
           {page === 'assessment' && report && <ReleaseAssessmentPanel scanId={report.id}/>}
+          {page === 'tests' && report && <QcTestCasesPanel scanId={report.id} review={aiOfScan} providers={configuredProviders} shareAckRequired={shareAckRequired} onOpenReview={() => setPage('ai')}/>}
           {page === 'tests' && report && <TestDiscoveryPanel scanId={report.id}/>}
           {page === 'tests' && report && <TestProposalsPanel scanId={report.id} runRefused={shareAckRequired}/>}
           {page === 'ai' && report && <div className="ai-workspace">

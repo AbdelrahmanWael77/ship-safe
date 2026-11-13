@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 import httpx
 
-from .gemini import ATTEMPTS, BACKOFF_SECONDS, RETRY_STATUSES, SYSTEM_INSTRUCTION, GeminiError, _count
+from .gemini import ATTEMPTS, BACKOFF_SECONDS, RETRY_STATUSES, SYSTEM_INSTRUCTION, AITask, GeminiError, _count
 
 API_BASE = "https://api.openai.com/v1"
 TIMEOUT_SECONDS = 120.0
@@ -121,19 +121,20 @@ class OpenAIClient:
     def __repr__(self) -> str:  # never show the key
         return f"OpenAIClient(model={self.model!r})"
 
-    def _body(self, context: dict, with_reasoning: bool) -> dict:
+    def _body(self, context: dict, with_reasoning: bool, task: AITask | None = None) -> dict:
         body: dict[str, Any] = {
             "model": self.model,
-            "instructions": SYSTEM_INSTRUCTION,
-            "input": "Review this change. Input JSON:\n" + json.dumps(context, ensure_ascii=False),
-            "text": {"format": {"type": "json_schema", "name": "shipsafe_review", "schema": RESPONSE_SCHEMA, "strict": True}},
+            "instructions": task.instruction if task else SYSTEM_INSTRUCTION,
+            "input": (task.prompt if task else "Review this change.") + " Input JSON:\n" + json.dumps(context, ensure_ascii=False),
+            "text": {"format": {"type": "json_schema", "name": task.name if task else "shipsafe_review",
+                                "schema": task.openai_schema if task else RESPONSE_SCHEMA, "strict": True}},
             "store": False,
         }
         if with_reasoning and self.reasoning_effort:
             body["reasoning"] = {"effort": self.reasoning_effort}
         return body
 
-    def review(self, context: dict) -> tuple[dict, dict]:
+    def review(self, context: dict, task: AITask | None = None) -> tuple[dict, dict]:
         """Ask the model to review ``context``; returns its JSON object and the token usage."""
         with_reasoning = True
         failure: OpenAIError | None = None
@@ -143,7 +144,7 @@ class OpenAIClient:
             if attempt > 1 and failure is not None:
                 self._sleep(BACKOFF_SECONDS[min(attempt - 2, len(BACKOFF_SECONDS) - 1)])
             try:
-                response = self._client.post("/responses", json=self._body(context, with_reasoning))
+                response = self._client.post("/responses", json=self._body(context, with_reasoning, task))
             except httpx.TimeoutException:
                 failure = OpenAIError(504, "openai_timeout", f"OpenAI did not answer within {self._timeout:g} seconds.")
                 continue

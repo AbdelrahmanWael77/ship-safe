@@ -32,7 +32,7 @@ def rows(db_file, sql, *args):
 
 def test_fresh_database_reaches_version_4_with_test_runs(tmp_path):
     db_file = tmp_path / "scans.db"
-    assert db.migrate(db_file) == db.LATEST_VERSION == 4
+    assert db.migrate(db_file) == db.LATEST_VERSION >= 4
     assert [row[1] for row in rows(db_file, "PRAGMA table_info(test_runs)")] == [
         "id", "proposal_id", "scan_id", "requested_at", "requested_by", "status", "reason", "runner", "base_commit",
         "head_commit", "started_at", "finished_at", "exit_code", "output"]
@@ -56,7 +56,7 @@ def test_version_3_data_survives_migration_4_and_failure_rolls_back(tmp_path):
     assert db.schema_version(db_file) == 3
     assert ("test_runs",) not in rows(db_file, "SELECT name FROM sqlite_master WHERE type = 'table'")
 
-    assert db.migrate(db_file) == 4 and db.migrate(db_file) == 4
+    assert db.migrate(db_file, db.MIGRATIONS[:4]) == 4 and db.migrate(db_file, db.MIGRATIONS[:4]) == 4
     assert [rows(db_file, f"SELECT * FROM {table}") for table in tables] == before
     with pytest.raises(db.SchemaVersionError):
         db.migrate(db_file, V3)  # a build that only knows version 3 refuses this database

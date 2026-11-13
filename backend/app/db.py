@@ -113,6 +113,29 @@ MIGRATIONS: tuple[Migration, ...] = (
         )""",
         "CREATE INDEX IF NOT EXISTS idx_test_runs_proposal ON test_runs(proposal_id, requested_at)",
     )),
+    Migration(5, "QC test suites (manual test cases generated from an AI review) and tester results", (
+        # New tables only. A suite is text for people to execute; ShipSafe runs nothing.
+        """CREATE TABLE IF NOT EXISTS qc_test_suites (
+            id TEXT PRIMARY KEY,
+            scan_id TEXT NOT NULL,
+            review_id TEXT NOT NULL,          -- the AI review the cases were written from
+            created_at TEXT NOT NULL,
+            suite_json TEXT NOT NULL,         -- cases, generator (provider, model, usage), limitations
+            FOREIGN KEY(scan_id) REFERENCES scans(id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_qc_test_suites_scan ON qc_test_suites(scan_id, created_at)",
+        """CREATE TABLE IF NOT EXISTS qc_test_results (
+            id TEXT PRIMARY KEY,
+            suite_id TEXT NOT NULL,
+            case_id TEXT NOT NULL,
+            status TEXT NOT NULL,             -- 'passed', 'failed', 'blocked' or 'not_run'
+            tester TEXT NOT NULL,             -- self-declared name; ShipSafe has no authentication
+            note TEXT,
+            recorded_at TEXT NOT NULL,        -- append-only: the latest row of a case is its result
+            FOREIGN KEY(suite_id) REFERENCES qc_test_suites(id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_qc_test_results_case ON qc_test_results(suite_id, case_id, recorded_at)",
+    )),
 )
 LATEST_VERSION = MIGRATIONS[-1].version
 

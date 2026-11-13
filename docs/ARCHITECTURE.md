@@ -179,13 +179,23 @@ A single component file, `App.tsx`, with `useState` page switching and no router
 
 The UI can only choose among the demo repository's branches. Scanning another authorized repository is possible through the API but has no UI.
 
-Supporting modules (Phase 2 task 5, in progress; no Bitbucket screen exists yet):
+Bitbucket section (Phase 2 task 5, in progress). The sidebar has a BITBUCKET group; so far it holds one page, Repositories. Pull Requests and PR Analysis do not exist yet. `App.tsx` only adds the navigation group, asks `GET /api/bitbucket/status` once at start, and renders `BitbucketSection` for Bitbucket pages; a failed status request never affects the demo flow or its error banner.
+
+Supporting modules:
 
 - `api.ts` — `api<T>()`, `describeError`, `API_BASE`, moved out of `App.tsx` with the same behaviour, plus `ApiError` (`status`, `code`) and `isApiError(error, code?)`. `status` is 0 when the API cannot be reached.
 - `types.ts` — the Bitbucket contract types (`Binding`, `BitbucketStatus`, `BitbucketRepository`, `PullRequest`, `PullRequestListItem`, `PullRequestList`, `PullRequestDetail`, `PullRequestScan`), optional `binding` on `Report` and `ScanHistory`, and the two optional import-truncation summary keys.
 - `bitbucket/stale.ts` — `staleStatus(binding)` and `staleDisplay(binding)`: the single place that turns `stale` + `stale_checked` into Current, Stale, or Not checked. A scan is called Current only when the response that carried it was checked.
 - `bitbucket/StaleBadge.tsx` — the badge; renders nothing for scans that stale does not apply to (local scans, reports without a binding).
-- `bitbucket.css` — styles for the Bitbucket screens; `styles.css` is not edited.
+- `bitbucket/client.ts` — `getBitbucketStatus()`, `listRepositories()`; the browser only ever calls the ShipSafe API.
+- `bitbucket/useLoad.ts` — loading / error / reload state for one request; drops late answers.
+- `bitbucket/pages.ts` — the Bitbucket page ids and navigation entries.
+- `bitbucket/BitbucketSection.tsx` — heading and page switch for the section.
+- `bitbucket/ConnectionStatus.tsx` — what the status route reported: checking, configured (workspace and number of approved repositories), not configured (which variables to set on the server; never a value), or the request failed (Retry). "Configured" means the server has settings; the status route does not contact Bitbucket, so the repository list is the first real call.
+- `bitbucket/RepositoriesPage.tsx` — lists exactly what `GET /api/bitbucket/repositories` returns (name, identifier, default branch, "Open in Bitbucket" with the API's URL in a new tab). States: loading, empty, error with the API's message, a next step and the error code, Retry, Refresh, not configured. A configured slug that Bitbucket did not return is named in a note but never listed as a repository. The list is not requested when the server is not configured.
+- `bitbucket/ErrorPanel.tsx` — shared error display with per-code next steps.
+- `bitbucket.css` — styles for the Bitbucket screens; `styles.css` is not edited. It also lets the sidebar scroll, because the extra group makes it taller than a 900-pixel-high window.
+- Known gaps until the integration milestone: the top bar still says "LIVE DEMO" and the footer "Synthetic demo repository" on Bitbucket pages; there is no mock mode yet, so without Bitbucket credentials only the not-configured state can be seen in a browser.
 
 ## Demo generator and settings
 
@@ -208,7 +218,7 @@ Backend only, under `backend/tests` (236 tests on 2026-11-13). Each test builds 
 | `test_migration_2.py` | 17 | P2 task 3: schema version 2, row preservation, rollback, `insert_scan`, `sync_stale` |
 | `test_bitbucket_api.py` | 45 | P2 task 4: Bitbucket routes end to end over mocked HTTP, merge-base comparison, stale marking and `stale_checked`, error mapping, import-analysis bound, report-shape guard, example-file drift guard |
 
-Frontend (`npm test`, 34 tests on 2026-11-13, all in jsdom with `fetch` stubbed): `App.test.tsx` (2) is a smoke test of the existing demo dashboard using `docs/example-scan-report.json`; `api.test.ts` (15) covers the API helper and `ApiError`; `bitbucket/stale.test.tsx` (17) covers the stale logic and badge, including against `docs/example-bitbucket-responses.json`. There is no lint step. The dashboard has also been exercised in headless Chrome by throwaway scripts (recorded in the session handoff: all six demo branches, export and ZIP per scan; re-run on 2026-11-13 against Vite 5 and Vite 6 with identical results); those scripts are not part of the repository.
+Frontend (`npm test`, 63 tests on 2026-11-13, all in jsdom with `fetch` stubbed by `src/test/api.ts`; fixtures in `src/test/fixtures.ts` come from `docs/example-bitbucket-responses.json` and `docs/example-scan-report.json`): `App.test.tsx` (13) covers the existing demo dashboard and navigation into the Bitbucket section; `api.test.ts` (15) the API helper and `ApiError`; `bitbucket/stale.test.tsx` (17) the stale logic and badge; `bitbucket/RepositoriesPage.test.tsx` (18) connection status, loading, empty, errors, retry, refresh and not-configured. There is no lint step. The dashboard has also been exercised in headless Chrome by throwaway scripts (recorded in the session handoff: all six demo branches, export and ZIP per scan; re-run on 2026-11-13 against Vite 5 and Vite 6 with identical results); those scripts are not part of the repository.
 
 ## Phase 2 dependency points
 

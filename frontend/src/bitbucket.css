@@ -131,3 +131,5 @@
 .proposal-form textarea{font-family:Consolas,monospace;resize:vertical}
 .proposal-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 @media(max-width:800px){.proposal-form{grid-template-columns:1fr}}
+.proposal-run-result{color:#fbc579!important;font-weight:650}
+.proposal-runs{margin:6px 0 0;padding-left:18px;font-size:11.5px;line-height:1.7;color:#b3c3d4}

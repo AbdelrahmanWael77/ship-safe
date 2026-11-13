@@ -8,7 +8,7 @@
 - Each migration runs in one `BEGIN IMMEDIATE` transaction together with its version bump. A failure rolls the whole step back and stops startup.
 - If the file's version is higher than the code knows, startup stops with `SchemaVersionError` and the file is not modified.
 
-Phase 1 made **no schema change**. Phase 2 added version 2 and Phase 4 task B added version 3 (both below). Phase 3 made no schema change. A database that has reached a version is refused by any build that only knows an older one (`SchemaVersionError`), so after running this code, do not point an older branch at the same `scans.db`; use a separate `SHIPSAFE_DB_PATH`.
+Phase 1 made **no schema change**. Phase 2 added version 2, Phase 4 task B added version 3 and Phase 4 task C added version 4 (all below). Phase 3 made no schema change. A database that has reached a version is refused by any build that only knows an older one (`SchemaVersionError`), so after running this code, do not point an older branch at the same `scans.db`; use a separate `SHIPSAFE_DB_PATH`.
 
 Covered by `backend/tests/test_foundation.py` (the runner: adoption of a populated v0.2 database, idempotence, rollback of a failing migration, refusal of a newer database, row preservation across an additive column), `backend/tests/test_migration_2.py` (version 2 itself) and `backend/tests/test_proposals.py` (version 3 itself).
 
@@ -21,6 +21,15 @@ Two new tables; no existing table, column or row is touched.
 - Stale state is not stored here. A proposal is stale when its scan is (`scans.stale_at`).
 
 Tested: fresh database reaches version 3; version 2 rows survive byte for byte; idempotent; a failing version 3 rolls back to version 2; a build that only knows version 2 refuses a version 3 database; the statements only add.
+
+## Version 4 — test runs (Phase 4 task C, implemented)
+
+One new table; nothing existing is touched.
+
+- `test_runs`: `id`, `proposal_id` (→ `test_proposals.id`), `scan_id` (→ `scans.id`), `requested_at`, `requested_by` (self-declared name), `status`, `reason`, `runner` (runner identity as reported at request time), `base_commit`, `head_commit`, `started_at`, `finished_at`, `exit_code`, `output`.
+- This build writes only `status = 'blocked'`, with `started_at`, `finished_at`, `exit_code` and `output` all NULL, because it executes nothing. Those four columns exist so that a later, verified runner can record a real execution without another table; until then a non-NULL value in any of them would be a defect.
+
+Tested in `backend/tests/test_runner.py`: fresh database reaches version 4; version 3 rows survive; idempotent; a failing version 4 rolls back to version 3; a build that only knows version 3 refuses a version 4 database; the statements only add.
 
 ## Rules
 

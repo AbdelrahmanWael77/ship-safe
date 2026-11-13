@@ -90,6 +90,29 @@ MIGRATIONS: tuple[Migration, ...] = (
         )""",
         "CREATE INDEX IF NOT EXISTS idx_test_proposal_decisions ON test_proposal_decisions(proposal_id, decided_at)",
     )),
+    Migration(4, "test runs: every run request, including those blocked because nothing could run", (
+        # New table only. A blocked request has status 'blocked' and NULL in
+        # started_at, finished_at, exit_code and output: nothing was executed.
+        """CREATE TABLE IF NOT EXISTS test_runs (
+            id TEXT PRIMARY KEY,
+            proposal_id TEXT NOT NULL,
+            scan_id TEXT NOT NULL,
+            requested_at TEXT NOT NULL,
+            requested_by TEXT NOT NULL,       -- self-declared name; ShipSafe has no authentication
+            status TEXT NOT NULL,             -- 'blocked' is the only status this build writes
+            reason TEXT,
+            runner TEXT NOT NULL,             -- runner identity as reported at request time
+            base_commit TEXT NOT NULL,
+            head_commit TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            exit_code INTEGER,
+            output TEXT,
+            FOREIGN KEY(proposal_id) REFERENCES test_proposals(id),
+            FOREIGN KEY(scan_id) REFERENCES scans(id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_test_runs_proposal ON test_runs(proposal_id, requested_at)",
+    )),
 )
 LATEST_VERSION = MIGRATIONS[-1].version
 

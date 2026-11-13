@@ -260,3 +260,23 @@ export interface TestProposal {
   executed: false;
   identity_note: string;
 }
+
+// -- Phase 4 task C: run requests. This build executes nothing, so every run is "blocked".
+export interface TestRun {
+  id: string;
+  proposal_id: string;
+  scan_id: string;
+  requested_at: string;
+  requested_by: string;
+  status: string;
+  reason: string | null;
+  runner: string;
+  base_commit: string;
+  head_commit: string;
+  /** All null when nothing ran. */
+  started_at: string | null;
+  finished_at: string | null;
+  exit_code: number | null;
+  output: string | null;
+  executed: boolean;
+}

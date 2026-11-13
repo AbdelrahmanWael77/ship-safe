@@ -4,10 +4,10 @@
 // decision; the Run control stays disabled until an isolated runner exists.
 import { useState } from 'react'
 import { AlertCircle, Ban, Check, FilePlus2, Play, RefreshCw, X } from 'lucide-react'
-import { api } from './api'
+import { api, isApiError } from './api'
 import { useLoad } from './bitbucket/useLoad'
 import { Pill } from './components'
-import type { TestProposal } from './types'
+import type { TestProposal, TestRun } from './types'
 
 const STATUS: Record<TestProposal['status'], { label: string; kind: string }> = {
   pending: { label: 'Pending decision', kind: 'muted' },
@@ -94,6 +94,20 @@ function Proposal({ proposal, base, onChanged }: { proposal: TestProposal; base:
   const [error, setError] = useState<string | null>(null)
   const status = STATUS[proposal.status]
   const lines = proposal.content.split('\n')
+  // Run requests of this proposal. In this build every one of them is BLOCKED: nothing runs.
+  const runs = useLoad(() => api<TestRun[]>(`${base}/${proposal.id}/runs`), `test-runs:${proposal.id}`)
+  const [runResult, setRunResult] = useState<string | null>(null)
+
+  const requestRun = async () => {
+    setBusy(true); setRunResult(null)
+    try {
+      await post<unknown>(`${base}/${proposal.id}/runs`, { requested_by: name })
+      // No build of ShipSafe answers a run request with success; if one ever did, do not call it a result.
+      setRunResult('The request was accepted, but this dashboard has no way to show an execution. Check the run history.')
+    } catch (exc) {
+      setRunResult(isApiError(exc, 'execution_unavailable') ? `BLOCKED. ${exc.message}` : `Run not requested: ${message(exc)}`)
+    } finally { setBusy(false); runs.reload() }
+  }
 
   const decide = async (decision: 'approved' | 'rejected') => {
     setBusy(true); setError(null)
@@ -112,8 +126,10 @@ function Proposal({ proposal, base, onChanged }: { proposal: TestProposal; base:
           <p>Proposed {when(proposal.created_at)} · text written by {proposal.origin === 'human' ? 'a person' : 'an imported AI review (unverified)'}{proposal.finding_ref ? <> · for finding <code>{proposal.finding_ref}</code></> : null} · commits <code>{proposal.base_commit.slice(0, 12)}</code> → <code>{proposal.head_commit.slice(0, 12)}</code></p>
           {proposal.rationale && <p>{proposal.rationale}</p>}
         </div>
-        <button className="secondary-button" disabled title="No verified isolated runner is available, so tests cannot be run."><Play size={14} /> Run <Ban size={13} /> BLOCKED</button>
+        <button className="secondary-button" onClick={requestRun} disabled={busy || !proposal.eligible_to_run || name.trim().length < 2}
+          title="No verified isolated runner is available. A request is recorded as BLOCKED; nothing is run."><Play size={14} /> Run <Ban size={13} /> BLOCKED</button>
       </div>
+      {runResult && <p className="proposal-run-result" role="status">{runResult}</p>}
       <p className="proposal-blocked">Run is blocked: no verified isolated runner is available. {proposal.eligible_to_run ? 'This proposal is approved for these commits and would be allowed to run once one is.' : proposal.stale ? 'This proposal is stale and could not run even then.' : 'Only an approved proposal could run.'}</p>
 
       <div className="diff-viewer proposal-diff">
@@ -136,6 +152,13 @@ function Proposal({ proposal, base, onChanged }: { proposal: TestProposal; base:
         </div>
         {error && <p className="ai-import-status error" role="alert">{error}</p>}
         <p className="muted-small">{proposal.identity_note}</p>
+        {runs.data && runs.data.length > 0 && <>
+          <div className="micro-label">RUN REQUESTS (newest first)</div>
+          <ol className="proposal-runs">{runs.data.map(run => (
+            <li key={run.id}><strong>{run.executed ? run.status : 'BLOCKED · not executed'}</strong> · requested by {run.requested_by} · {when(run.requested_at)} · runner: {run.runner}{run.reason ? ` · ${run.reason}` : ''}</li>
+          ))}</ol>
+        </>}
+        {runs.error && <p className="muted-small">The run history could not be loaded.</p>}
       </div>
     </article>
   )

@@ -67,9 +67,41 @@ describe('proposed tests', () => {
     expect(posted()).toEqual([{ url: `${URL}/p1/decisions`, body: { decision: 'approved', decided_by: 'Nour Waled', note: 'Looks right.' } }])
     const after = await card()
     expect(after.getByText(/by Nour Waled/)).toBeVisible()
-    expect(after.getByRole('button', { name: /Run.*BLOCKED/ })).toBeDisabled()
     expect(after.getByText(/approved for these commits and would be allowed to run once one is/)).toBeVisible()
     expect(api.count(URL)).toBe(2)
+  })
+
+  const blockedRun = { id: 'r1', proposal_id: 'p1', scan_id: SCAN, requested_at: '2026-11-13T12:00:00+00:00', requested_by: 'Nour Waled', status: 'blocked',
+    reason: 'No verified isolated test runner is configured. ShipSafe never runs repository tests on its own host, so nothing was executed.',
+    runner: 'none', base_commit: 'a'.repeat(40), head_commit: 'b'.repeat(40), started_at: null, finished_at: null, exit_code: null, output: null, executed: false }
+
+  test('requesting a run of an approved proposal reports BLOCKED with the runner’s reason and lists the blocked request', async () => {
+    const RUNS = `${URL}/p1/runs`
+    open({ [URL]: { body: [approved()] }, [RUNS]: [{ body: [] }, { body: [blockedRun] }],
+      [`POST ${RUNS}`]: { status: 503, body: { detail: blockedRun.reason, code: 'execution_unavailable', run: blockedRun } } })
+    const item = await card()
+    const run = item.getByRole('button', { name: /Run.*BLOCKED/ })
+    expect(run).toBeDisabled()                                          // a name is required first
+    await userEvent.type(item.getByRole('textbox', { name: /Your name/ }), 'Nour Waled')
+    await userEvent.click(run)
+
+    expect(await item.findByRole('status')).toHaveTextContent('BLOCKED. No verified isolated test runner is configured.')
+    expect(posted()).toEqual([{ url: RUNS, body: { requested_by: 'Nour Waled' } }])
+    const entry = await item.findByText('BLOCKED · not executed')
+    expect(entry.closest('li')).toHaveTextContent('requested by Nour Waled')
+    expect(entry.closest('li')).toHaveTextContent('runner: none')
+    for (const word of ['passed', 'failed', 'Passed', 'Failed', 'exit code']) expect(item.queryByText(new RegExp(word))).not.toBeInTheDocument()
+  })
+
+  test('a pending or rejected proposal cannot request a run even with a name', async () => {
+    open({ [URL]: { body: [proposal(), proposal({ id: 'p2', target_path: 'tests/test_two.py', status: 'rejected',
+      decisions: [{ id: 'd9', decision: 'rejected', decided_at: '2026-11-13T11:00:00+00:00', decided_by: 'Nour', note: null }] })] } })
+    for (const path of ['tests/test_auth_regression.py', 'tests/test_two.py']) {
+      const item = await card(path)
+      await userEvent.type(item.getByRole('textbox', { name: /Your name/ }), 'Nour Waled')
+      expect(item.getByRole('button', { name: /Run.*BLOCKED/ })).toBeDisabled()
+    }
+    expect(posted()).toEqual([])
   })
 
   test('rejecting records a rejection; a refused decision shows the API’s reason', async () => {

@@ -18,9 +18,10 @@ from .ai_handoff import MAX_IMPORT_BYTES, parse_review, review_content_digest, c
 from .config import load_settings
 from .db import BINDING_COLUMNS, binding, insert_scan, migrate, pull_request_scans, scanned_pull_requests, session, sync_stale
 from .discovery import discover_tests
+from .runner import EXECUTION_UNAVAILABLE, Runner, UnavailableRunner, blocked_reason, record_blocked_run, runs_of
 from .proposals import (
     MAX_REQUEST_BYTES as MAX_PROPOSAL_REQUEST_BYTES, PROPOSAL_COLUMNS, DecisionRequest, ProposalError, ProposalRequest,
-    check_against_tree, insert_decision, insert_proposal, served as served_proposal, validate_content, validate_target_path,
+    RunRequest, check_against_tree, clean_name, insert_decision, insert_proposal, served as served_proposal, validate_content, validate_target_path,
 )
 from .demo_seed import DEMO_BRANCHES, ensure_demo_repo
 from .errors import (
@@ -102,6 +103,7 @@ def create_app(
     db_file: Path | None = None,
     allowed_root: Path | None = None,
     bitbucket: BitbucketCloudProvider | None = None,
+    runner: Runner | None = None,
 ) -> FastAPI:
     """``bitbucket`` overrides the provider built from settings (tests pass one
     with a mocked transport)."""
@@ -129,6 +131,9 @@ def create_app(
 
     app = FastAPI(title="ShipSafe API", version="0.2.0", lifespan=lifespan)
     app.state.bitbucket = bitbucket
+    # The test-runner boundary (Phase 4). The default, and the only runner this build
+    # ships, reports that execution is unavailable. ``runner=`` is a test seam.
+    runner = runner or UnavailableRunner()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -461,6 +466,57 @@ def create_app(
             except ProposalError as exc:
                 raise HTTPException(exc.status, detail=str(exc)) from exc
             return served_proposal(conn, rows[0], scan_stale=stale)
+
+    # -- Phase 4 task C: runner boundary. No test is executed by this build. --
+
+    @app.get("/api/tests/runner")
+    def test_runner_status():
+        """Whether isolated test execution is available. In this build it never is."""
+        answer, reason = blocked_reason(runner)
+        return {**answer, "available": False, "status": EXECUTION_UNAVAILABLE, "reason": reason}
+
+    @app.get("/api/scans/{scan_id}/tests/proposals/{proposal_id}/runs")
+    def list_test_runs(scan_id: str, proposal_id: str):
+        read_scan(scan_id)
+        with connection() as conn:
+            if not proposal_rows(conn, scan_id, proposal_id):
+                raise HTTPException(404, detail="Test proposal not found for this scan")
+            return runs_of(conn, proposal_id)
+
+    @app.post("/api/scans/{scan_id}/tests/proposals/{proposal_id}/runs")
+    async def request_test_run(scan_id: str, proposal_id: str, request: Request):
+        """Ask for an approved proposal to be run. Every check that can refuse comes
+        before the runner; the runner then refuses too, and the request is recorded
+        as BLOCKED. Nothing is executed and no result is invented."""
+        report, source = review_inputs(scan_id)
+        data = await limited_json(request, 16 * 1024)
+        try:
+            body = RunRequest.model_validate(data)
+            requested_by = clean_name(body.requested_by)
+        except ValidationError as exc:
+            raise HTTPException(422, detail=f"Invalid run request: {str(exc)[:700]}") from exc
+        except ProposalError as exc:
+            raise HTTPException(exc.status, detail=str(exc).replace("decided_by", "requested_by")) from exc
+        with connection() as conn:
+            rows = proposal_rows(conn, scan_id, proposal_id)
+            if not rows:
+                raise HTTPException(404, detail="Test proposal not found for this scan")
+            proposal = served_proposal(conn, rows[0], scan_stale=source["stale"])
+        if not proposal["eligible_to_run"]:
+            why = ("it is stale: the pull request has new commits since its scan" if proposal["stale"]
+                   else f"its status is '{proposal['status']}', not 'approved'")
+            raise HTTPException(409, detail=f"This proposal cannot be run because {why}.")
+        if needs_acknowledgement(report, source):
+            raise HTTPException(403, detail="Tests can only be requested for the synthetic demo repository. "
+                                            "Running tests of any other repository is not permitted.")
+        answer, reason = blocked_reason(runner)
+        with connection() as conn:
+            run_id = record_blocked_run(
+                conn, proposal_id=proposal_id, scan_id=scan_id, requested_by=requested_by, reason=reason,
+                runner_name=str(answer.get("runner") or "unknown"),
+                base_commit=proposal["base_commit"], head_commit=proposal["head_commit"])
+            run = next(item for item in runs_of(conn, proposal_id) if item["id"] == run_id)
+        return JSONResponse(status_code=503, content={"detail": reason, "code": EXECUTION_UNAVAILABLE, "run": run})
 
     @app.get("/api/scans/{scan_id}/ai/reviews/latest")
     def latest_ai_review(scan_id: str):

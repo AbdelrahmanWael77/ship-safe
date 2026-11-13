@@ -51,12 +51,12 @@ Show: discovered tests, proposals, reviewable diff, approve/reject, execution pe
 - Integrator: reviews execution model, approves testing boundary, coordinates migrations/API.
 
 ## Acceptance gates
-- [ ] Suggested tests never auto-execute; visible, logged human approval first.
-- [ ] Test execution occurs only in verified isolation or is explicitly BLOCKED.
-- [ ] One real regression test demonstrates base pass/head fail on synthetic code.
-- [ ] Output, logs, errors, timestamps and SHAs come from real execution.
+- [x] Suggested tests never auto-execute; visible, logged human approval first. *(2026-11-13: nothing executes at all in this build; a run request is refused unless the proposal has a recorded approval and is not stale. `backend/tests/test_proposals.py`, `test_runner.py`. Names on decisions are self-declared: there is no authentication.)*
+- [x] Test execution occurs only in verified isolation or is explicitly BLOCKED. *(2026-11-13: **BLOCKED**. No isolated runner exists; every run request is stored as `blocked` and answered 503 `execution_unavailable`, with no log and no result. `test_runner.py`.)*
+- [ ] One real regression test demonstrates base pass/head fail on synthetic code. *(NOT TESTED: needs real execution in a verified isolated runner.)*
+- [ ] Output, logs, errors, timestamps and SHAs come from real execution. *(NOT TESTED: no execution exists. Blocked runs carry real request timestamps and SHAs and no output.)*
 - [ ] No host secrets/mounts/network leak, unapproved patch application, or Bitbucket mutations.
-- [ ] No regressions to Phase 1–3 functionality.
+- [x] No regressions to Phase 1–3 functionality. *(2026-11-13: full backend suite 414 passed, frontend 138 passed, build passed.)*
 
 ## Phase 4 handoff
 Each owner fills session handoff. Integrator verifies the actual sandbox environment, merges reviewed code, updates canonical docs and records whether execution was PASS or BLOCKED. Create approved checkpoint `shipsafe-phase-4`. **Stop; Phase 5 is separate.**

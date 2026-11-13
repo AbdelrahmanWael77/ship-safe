@@ -137,6 +137,10 @@ class DecisionRequest(StrictModel):
     note: str | None = Field(default=None, max_length=1000)
 
 
+class RunRequest(StrictModel):
+    requested_by: str = Field(min_length=2, max_length=80)
+
+
 def clean_name(value: str) -> str:
     name = " ".join(value.split())
     if len(name) < 2 or any(ord(char) < 32 or ord(char) == 127 for char in value):

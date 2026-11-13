@@ -16,6 +16,8 @@ from app.main import create_app
 from app.proposals import MAX_PROPOSAL_BYTES, ProposalError, check_against_tree, validate_content, validate_target_path
 
 V2 = db.MIGRATIONS[:2]
+# The migration tests here are about migration 3 itself, so they stop there.
+V3 = db.MIGRATIONS[:3]
 GOOD_TEST = (
     "from app.auth import get_invoice_for_user\n\n\n"
     "def test_other_user_is_refused():\n"
@@ -36,7 +38,7 @@ def rows(db_file, sql, *args):
 
 def test_fresh_database_reaches_version_3_with_both_tables(tmp_path):
     db_file = tmp_path / "scans.db"
-    assert db.migrate(db_file) == db.LATEST_VERSION == 3
+    assert db.migrate(db_file, V3) == 3
     tables = {name for (name,) in rows(db_file, "SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"scans", "ai_reviews", "test_proposals", "test_proposal_decisions"} <= tables
     assert [row[1] for row in rows(db_file, "PRAGMA table_info(test_proposals)")] == [
@@ -57,10 +59,10 @@ def test_version_2_data_survives_migration_3_byte_for_byte_and_it_is_idempotent(
         conn.execute("INSERT INTO ai_reviews VALUES ('r1', 's1', '2026-01-03T00:00:00+00:00', ?)", ('{"summary": "x"}',))
     before = (rows(db_file, "SELECT * FROM scans"), rows(db_file, "SELECT * FROM ai_reviews"))
 
-    assert db.migrate(db_file) == 3
+    assert db.migrate(db_file, V3) == 3
     assert (rows(db_file, "SELECT * FROM scans"), rows(db_file, "SELECT * FROM ai_reviews")) == before
     assert rows(db_file, "SELECT COUNT(*) FROM test_proposals") == [(0,)]
-    assert db.migrate(db_file) == 3
+    assert db.migrate(db_file, V3) == 3
     assert (rows(db_file, "SELECT * FROM scans"), rows(db_file, "SELECT * FROM ai_reviews")) == before
 
 
@@ -73,12 +75,12 @@ def test_migration_3_failure_rolls_back_to_version_2(tmp_path):
         db.migrate(db_file, broken)
     assert db.schema_version(db_file) == 2
     assert ("test_proposals",) not in rows(db_file, "SELECT name FROM sqlite_master WHERE type = 'table'")
-    assert db.migrate(db_file) == 3
+    assert db.migrate(db_file, V3) == 3
 
 
 def test_a_build_that_only_knows_version_2_refuses_a_version_3_database(tmp_path):
     db_file = tmp_path / "scans.db"
-    db.migrate(db_file)
+    db.migrate(db_file, V3)
     with pytest.raises(db.SchemaVersionError):
         db.migrate(db_file, V2)
     assert db.schema_version(db_file) == 3

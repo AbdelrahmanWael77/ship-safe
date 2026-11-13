@@ -178,6 +178,9 @@ export interface AIReview {
   schema_version: 'shipsafe.ai-review.v1' | 'shipsafe.ai-review.v2';
   /** v2 only: what the review says it was made for (checked against the scan on import). */
   reviewed_source?: { provider: string | null; repository_id: string | null; pull_request_id: string | null; head_commit: string | null };
+  /** Served beside the review, never stored in it: the binding of the scan the review was made for.
+   *  `stale: true` means the pull request has new commits since, so the review is outdated. */
+  scan_binding?: Binding;
   /** v2 only: what the reviewer could not see. */
   missing_context?: string[];
   scan_id: string;

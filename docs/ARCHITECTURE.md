@@ -49,11 +49,10 @@ All routes are unauthenticated and intended for loopback use only. CORS allows `
 | `GET /api/scans/{id}/export` | 200 `Report` + `binding` as attachment | 404 |
 | `GET /api/scans/{id}/ai/handoff[?acknowledge_source_sharing=true]` | 200 `application/zip` (`PACKAGE.json`, `REVIEW_INSTRUCTIONS.md`, `review-input.json`, `response-template.json`) | 404; 428 when the scan is not the synthetic demo and the acknowledgement is missing |
 | `GET /api/scans/{id}/ai/context` | 200 `{scan_id, context_digest, review_count, acknowledgement_required}` | 404 |
-
-The review package (Phase 3 task 1): `review-input.json` holds `review_context`, which starts with `source` (`provider, repository_id, pull_request_id, base_commit, head_commit, comparison` from the scan's binding, without stale state). `context_digest` is the SHA-256 of the canonical JSON of that context, so it covers the identity and exact commits. Patches and finding evidence are redacted on a best-effort basis (`[REDACTED:kind]`); a context larger than 1 MiB loses its largest patches (`diff_omitted_from_package: true`); both are stated in `limitations`. `PACKAGE.json` repeats the identity and digest and adds a per-export `package_id`.
-| `POST /api/scans/{id}/ai/reviews` | 201 saved `AIReview` | 404 · 413 over 256 KiB · 422 malformed or schema-invalid · 409 wrong scan, digest, file, or static finding ID |
-| `GET /api/scans/{id}/ai/reviews` | 200 `AIReview[]`, newest first, max 25 | 404 |
-| `GET /api/scans/{id}/ai/reviews/latest` | 200 `AIReview` or `null` | 404 |
+| `POST /api/scans/{id}/ai/reviews` | 201 saved `AIReview` + `scan_id`, `scan_binding` | 404 · 413 over 256 KiB · 422 malformed or schema-invalid · 409 wrong scan, digest, repository / pull request / head commit (v2), file, static finding ID, duplicate finding ID, or a review already imported for this scan |
+| `GET /api/scans/{id}/ai/reviews` | 200 `AIReview[]` each + `scan_id`, `scan_binding`; newest first, max 25 | 404 |
+| `GET /api/scans/{id}/ai/reviews/latest` | 200 `AIReview` (+ `scan_id`, `scan_binding`) or `null` | 404 |
+| `GET /api/scans/{id}/ai/reviews/history` | 200 reviews of this scan and, for a pull request scan, of every stored scan of the same pull request; each + `scan_id`, `scan_binding`, `current_scan`; newest first, max 50 | 404 |
 | `GET /api/repository/status` | 200 `{repo, main_sha, branches}` for the demo repository | 500 |
 | `GET /api/bitbucket/status` | 200 `{configured, provider, workspace, repositories}`; never the credential | |
 | `GET /api/bitbucket/repositories` | 200 `BitbucketRepository[]` (approved repositories only) | Bitbucket errors, below |
@@ -64,6 +63,12 @@ The review package (Phase 3 task 1): `review-input.json` holds `review_context`,
 Request body for `POST /api/scans` (`ScanRequest`): `repository_path` (optional, ≤1024 chars; omitted means the demo repository), `base_ref` (default `main`), `head_ref` (default `feature/release-candidate`), each ref 1–150 chars.
 
 Error bodies are `{"detail": string}` except FastAPI request-validation 422s, where `detail` is a list of `{loc, msg, type}` objects. The frontend handles both.
+
+### Claude review package and imports (Phase 3 tasks 1–3; synthetic JSON fixtures only)
+
+`review-input.json` holds `review_context`, which starts with `source` (`provider, repository_id, pull_request_id, base_commit, head_commit, comparison` from the scan's binding, without stale state). `context_digest` is the SHA-256 of the canonical JSON of that context, so it covers the identity and exact commits. Patches and finding evidence are redacted on a best-effort basis (`[REDACTED:kind]`); a context larger than 1 MiB loses its largest patches (`diff_omitted_from_package: true`); both are stated in `limitations`. `PACKAGE.json` repeats the identity and digest and adds a per-export `package_id` (not stored).
+
+Imports accept `shipsafe.ai-review.v1` and `.v2` (shapes: `docs/CLAUDE-CODE-HANDOFF.md`). The same review content cannot be imported twice for one scan (compared by a digest of the review without the fields ShipSafe adds). A stored review is never modified. Every served review carries `scan_binding`, the binding of the scan it was made for, read at response time: when the pull request's head moves, that scan is marked stale and so is every review of it. `stale_checked` is always false on these routes; they never contact Bitbucket. A review made for one scan is refused for any other scan, including a newer scan of the same pull request.
 
 ### Bitbucket routes (Phase 2 task 4; mocked HTTP only, never run against live Bitbucket)
 

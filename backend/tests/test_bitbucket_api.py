@@ -347,6 +347,54 @@ def test_expected_head_guard_refuses_a_scan_after_the_pull_request_moved(make_cl
 
 # -- stale detection ---------------------------------------------------------
 
+def test_a_review_goes_stale_with_its_scan_when_the_head_moves_and_history_spans_the_pull_requests_scans(make_client):
+    """Phase 3 task 3: a new pull request head makes the earlier Claude review stale, not current."""
+    fake = bitbucket()
+    client = make_client(fake)
+
+    def import_review(scan):
+        template = json.loads(review_package(client, scan["id"])["response-template.json"])
+        body = {**template, "summary": "Synthetic fixture review of the mocked pull request; nothing was executed.",
+                "findings": [], "test_ideas": [], "missing_context": []}
+        saved = client.post(f"/api/scans/{scan['id']}/ai/reviews", json=body)
+        assert saved.status_code == 201, saved.text
+        return body, saved.json()
+
+    first = client.post(f"{PR_URL}/scans").json()
+    first_body, first_review = import_review(first)
+    assert first_review["scan_binding"]["stale"] is False and first_review["scan_binding"]["head_commit"] == HEAD
+
+    move_head(fake, HEAD2)
+    client.get(PR_URL)  # looking at the pull request records that its head moved
+    served = client.get(f"/api/scans/{first['id']}/ai/reviews").json()[0]
+    assert served["id"] == first_review["id"] and served["imported_at"] == first_review["imported_at"]
+    assert served["scan_binding"]["stale"] is True and served["scan_binding"]["stale_at"] is not None
+    assert served["scan_binding"]["stale_checked"] is False  # recorded state; this route did not ask Bitbucket
+    assert served["reviewed_source"]["head_commit"] == HEAD   # the review still says which commit it was made for
+
+    second = client.post(f"{PR_URL}/scans").json()
+    assert second["binding"]["head_commit"] == HEAD2
+    # The old review is not valid for the new scan: other scan id, other digest, other head commit.
+    assert client.post(f"/api/scans/{second['id']}/ai/reviews", json=first_body).status_code == 409
+    assert client.post(f"/api/scans/{second['id']}/ai/reviews", json={
+        **first_body, "scan_id": second["id"],
+        "context_digest": client.get(f"/api/scans/{second['id']}/ai/context").json()["context_digest"],
+    }).status_code == 409
+    assert client.get(f"/api/scans/{second['id']}/ai/reviews").json() == []
+    _, second_review = import_review(second)
+
+    history = client.get(f"/api/scans/{second['id']}/ai/reviews/history").json()
+    assert [(item["id"], item["scan_id"], item["current_scan"], item["scan_binding"]["stale"]) for item in history] == [
+        (second_review["id"], second["id"], True, False),
+        (first_review["id"], first["id"], False, True),
+    ]
+    from_first = client.get(f"/api/scans/{first['id']}/ai/reviews/history").json()
+    assert [(item["id"], item["current_scan"]) for item in from_first] == [(second_review["id"], False), (first_review["id"], True)]
+    # Static results of both scans are untouched by the imports.
+    assert client.get(f"/api/scans/{first['id']}").json()["findings"] == first["findings"]
+    assert client.get(f"/api/scans/{second['id']}").json()["findings"] == second["findings"]
+
+
 def test_scan_goes_stale_when_the_head_moves_and_fresh_again_if_it_returns(make_client, tmp_path):
     fake = bitbucket()
     client = make_client(fake)

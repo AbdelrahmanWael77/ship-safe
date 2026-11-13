@@ -100,8 +100,10 @@ def test_v0_2_database_goes_straight_to_version_2_and_stays_usable_through_the_a
         assert client.get(f"/api/scans/{report['id']}").json() == {**report, "binding": legacy}
         assert client.get(f"/api/scans/{report['id']}/export").json() == {**report, "binding": legacy}
         assert client.get(f"/api/scans/{report['id']}/ai/handoff").status_code == 200
-        assert client.get(f"/api/scans/{report['id']}/ai/reviews").json() == [{"summary": "x"}]
-        assert client.get(f"/api/scans/{report['id']}/ai/reviews/latest").json() == {"summary": "x"}
+        # A stored review is served unchanged, with its scan and that scan's binding beside it (Phase 3 task 3).
+        served = {"summary": "x", "scan_id": report["id"], "scan_binding": legacy}
+        assert client.get(f"/api/scans/{report['id']}/ai/reviews").json() == [served]
+        assert client.get(f"/api/scans/{report['id']}/ai/reviews/latest").json() == served
     assert db.schema_version(db_file) == 2
     assert stored(db_file) == before
 

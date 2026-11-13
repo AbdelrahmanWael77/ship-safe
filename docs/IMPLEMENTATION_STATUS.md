@@ -10,10 +10,19 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 
 ### Phase 3 task list (order; one task at a time)
 1. [x] Trusted identity + minimal review package (committed `d0d19d2` on `feat/p3-review-package`, cut from `74661f4`)
-2. [x] Claude Code review prompt/schema v2 (**uncommitted** on `feat/p3-review-package`)
-3. [ ] Strict import and history (duplicate imports, review stale when the PR head moves, stored package id) — next
-4. [ ] Functional UX (AI vs static side by side, previous reviews, stale warning)
+2. [x] Claude Code review prompt/schema v2 (committed `779932e`)
+3. [x] Strict import and history (**uncommitted** on `feat/p3-review-package`)
+4. [ ] Functional UX (AI vs static side by side, previous reviews list, import status) — next; the stale warning already exists
 5. [ ] Operating model documentation for the Team subscription
+
+### Phase 3 task 3 — done 2026-11-13 (Windows 11, Python from `.venv`, Node 24.22.2)
+- **What changed:** a review already imported for a scan is refused (409; compared by a digest of the review content, so key order and whitespace do not matter). Every served review carries `scan_id` and `scan_binding` (the scan's binding, read at response time, never stored in the review): when a pull request's head moves, the scan and therefore its reviews show as stale. New route `GET /api/scans/{id}/ai/reviews/history`: reviews across all stored scans of the same pull request, each with its own scan's binding and `current_scan`. A review made for an older scan is refused for a newer scan of the same pull request. The Claude Review page shows a "This review is stale" warning with the commit the review was made for.
+- **Already enforced before this task (now pinned by tests):** schema version, size and types, scan id, digest, head commit, unknown paths, missing and extra fields; rejected imports leave no row; history keeps every import with its timestamp; the stored scan report is byte-for-byte unchanged.
+- **No migration:** the existing `ai_reviews` table was enough. Schema version stays 2.
+- **Contract change:** review responses gained `scan_id` (already present) and `scan_binding`; `test_migration_2.py` was updated for it.
+- **Files:** `backend/app/main.py`, `ai_handoff.py` (`review_content_digest`), `backend/tests/test_review_import_history.py` (new, 14 tests), `test_bitbucket_api.py` (1 test), `test_migration_2.py`, `frontend/src/types.ts`, `App.tsx`, `App.test.tsx` (2 tests), `docs/ARCHITECTURE.md` (also repaired a table that the task 1 edit had split).
+- **Tests:** `cd backend && ..\.venv\Scripts\python -m pytest -q` → 299 passed, 1 warning (a first full run had 1 failure, `test_migration_2`, which pinned the old review response shape; the test was updated and the full suite re-run). Frontend: `npm test` → 107 passed (7 files); `npm run build` → ✓.
+- **Limits / NOT TESTED:** stale state is only as fresh as the last pull request list, detail or scan call; review routes never ask Bitbucket. The duplicate check reads all reviews of the scan (bounded in practice, not by a limit). Synthetic fixtures and mocked Bitbucket only; not viewed in a browser.
 
 ### Phase 3 task 2 — done 2026-11-13 (Windows 11, Python from `.venv`, Node 24.22.2)
 - **What changed:** review schema `shipsafe.ai-review.v2`. Each finding has `id` (unique in the review), `status` fixed to `"suspected"`, `suggested_validation`, optional `proposed_patch` (stored as text, never applied). The review has `reviewed_source` (provider, repository, pull request, head commit; must equal the scan's, else 409) and `missing_context`. The response template now asks for v2 with the binding pre-filled; v1 reviews are still accepted. The instructions name the review areas (security, authorization, API compatibility, money/data integrity, validation, exception handling, affected modules, missing tests) and forbid claims of executed commands or tests. Neither schema can express "verified", test results or commands run (rejected, 422).

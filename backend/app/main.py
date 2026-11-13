@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, ValidationError
 
-from .ai_handoff import MAX_IMPORT_BYTES, parse_review, context_digest, handoff_zip, saved_review, validate_review_binding
+from .ai_handoff import MAX_IMPORT_BYTES, parse_review, review_content_digest, context_digest, handoff_zip, saved_review, validate_review_binding
 from .config import load_settings
 from .db import BINDING_COLUMNS, binding, insert_scan, migrate, pull_request_scans, scanned_pull_requests, session, sync_stale
 from .demo_seed import DEMO_BRANCHES, ensure_demo_repo
@@ -280,22 +280,58 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(409, detail=str(exc)) from exc
         review = saved_review(validated)
+        digest = review_content_digest(review)
         with connection() as conn:
+            # Same connection as the insert, so two identical imports cannot both pass the check.
+            existing = conn.execute("SELECT review_json FROM ai_reviews WHERE scan_id = ?", (scan_id,)).fetchall()
+            if any(review_content_digest(json.loads(row["review_json"])) == digest for row in existing):
+                raise HTTPException(409, detail="This review was already imported for this scan. Nothing was added.")
             conn.execute(
                 "INSERT INTO ai_reviews (id, scan_id, imported_at, review_json) VALUES (?, ?, ?, ?)",
                 (review["id"], scan_id, review["imported_at"], json.dumps(review)),
             )
-        return review
+        return served_review(review, scan_id, source)
+
+    def served_review(review: dict, scan_id: str, scan_binding: dict) -> dict:
+        """A stored review plus the scan it belongs to and that scan's binding.
+
+        ``scan_binding.stale`` is how a review becomes stale: a review is only
+        as current as the scan it was made for, and the scan is marked when the
+        pull request's head moves. Nothing is written into the stored review.
+        """
+        return {**review, "scan_id": scan_id, "scan_binding": scan_binding}
 
     @app.get("/api/scans/{scan_id}/ai/reviews")
     def list_ai_reviews(scan_id: str):
-        read_report(scan_id)
+        scan_binding = read_scan(scan_id)["binding"]
         with connection() as conn:
             rows = conn.execute(
                 "SELECT review_json FROM ai_reviews WHERE scan_id = ? ORDER BY imported_at DESC, rowid DESC LIMIT 25",
                 (scan_id,),
             ).fetchall()
-        return [json.loads(row["review_json"]) for row in rows]
+        return [served_review(json.loads(row["review_json"]), scan_id, scan_binding) for row in rows]
+
+    @app.get("/api/scans/{scan_id}/ai/reviews/history")
+    def ai_review_history(scan_id: str):
+        """Reviews of this scan and, for a pull request scan, of every other
+        stored scan of the same pull request, newest first. Each carries its
+        own scan's binding, so a review of an outdated head shows as stale."""
+        scan_binding = read_scan(scan_id)["binding"]
+        if scan_binding["pull_request_id"] is None:
+            return [{**review, "current_scan": True} for review in list_ai_reviews(scan_id)]
+        with connection() as conn:
+            rows = conn.execute(
+                f"SELECT r.review_json, s.id AS review_scan_id, {', '.join('s.' + c.strip() for c in BINDING_COLUMNS.split(','))}"
+                " FROM ai_reviews r JOIN scans s ON s.id = r.scan_id"
+                " WHERE s.provider = ? AND s.repository_id = ? AND s.pull_request_id = ?"
+                " ORDER BY r.imported_at DESC, r.rowid DESC LIMIT 50",
+                (scan_binding["provider"], scan_binding["repository_id"], scan_binding["pull_request_id"]),
+            ).fetchall()
+        return [
+            {**served_review(json.loads(row["review_json"]), row["review_scan_id"], binding(row)),
+             "current_scan": row["review_scan_id"] == scan_id}
+            for row in rows
+        ]
 
     @app.get("/api/scans/{scan_id}/ai/reviews/latest")
     def latest_ai_review(scan_id: str):

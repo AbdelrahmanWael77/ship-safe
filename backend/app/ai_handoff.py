@@ -305,6 +305,16 @@ def validate_review_binding(review: AIReviewImport | AIReviewImportV2, report: d
         raise ValueError("Limitations must be at most 700 characters each")
 
 
+_ADDED_ON_IMPORT = ("id", "imported_at", "source", "verification_status", "tests_executed")
+
+
+def review_content_digest(review: dict) -> str:
+    """Digest of what the reviewer supplied (the validated review without the
+    fields ShipSafe adds on import). Two imports with the same digest for one
+    scan are the same review."""
+    return hashlib.sha256(canonical_json({k: v for k, v in review.items() if k not in _ADDED_ON_IMPORT})).hexdigest()
+
+
 def saved_review(review: AIReviewImport | AIReviewImportV2) -> dict:
     return {
         "id": str(uuid4()),

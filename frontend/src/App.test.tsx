@@ -270,6 +270,26 @@ describe('imported Claude review (schema v2)', () => {
     expect((window as unknown as { __xss?: number }).__xss).toBeUndefined()
   })
 
+  test('a review whose scan is stale says so and names the commit it was made for; a current one does not', async () => {
+    const binding = { ...pullRequestHistoryItem().binding!, stale: true, stale_at: '2026-11-13T09:00:00+00:00' }
+    const reviews = `/api/scans/${report.id}/ai/reviews`
+    const api = await start({ [reviews]: { body: [{ ...reviewV2(), scan_binding: binding }] } })
+    await userEvent.click(primaryNav().getByRole('button', { name: /Claude Review/ }))
+    const alert = await screen.findByRole('alert')
+    expect(within(alert).getByRole('heading', { name: /This review is stale/ })).toBeVisible()
+    expect(within(alert).getByText('b'.repeat(40))).toBeVisible()
+    expect(alert.querySelector('[data-stale]')).toHaveAttribute('data-stale', 'stale-recorded')
+    expect(screen.getByText('Ownership guard appears removed')).toBeVisible()  // still shown, as history
+    expect(api.count(reviews)).toBe(1)
+  })
+
+  test('a review of a scan that is not stale shows no stale warning', async () => {
+    await start({ [`/api/scans/${report.id}/ai/reviews`]: { body: [{ ...reviewV2(), scan_binding: { ...pullRequestHistoryItem().binding!, stale: false } }] } })
+    await userEvent.click(primaryNav().getByRole('button', { name: /Claude Review/ }))
+    await screen.findByText('Ownership guard appears removed')
+    expect(screen.queryByText(/This review is stale/)).not.toBeInTheDocument()
+  })
+
   test('a v1 review still renders, without the v2-only sections', async () => {
     const { missing_context: _m, ...rest } = reviewV2()
     const { id: _i, status: _s, suggested_validation: _v, proposed_patch: _p, ...finding } = rest.findings[0]

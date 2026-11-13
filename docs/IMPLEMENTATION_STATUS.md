@@ -11,9 +11,15 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 ### Phase 3 task list (order; one task at a time)
 1. [x] Trusted identity + minimal review package (committed `d0d19d2` on `feat/p3-review-package`, cut from `74661f4`)
 2. [x] Claude Code review prompt/schema v2 (committed `779932e`)
-3. [x] Strict import and history (**uncommitted** on `feat/p3-review-package`)
-4. [ ] Functional UX (AI vs static side by side, previous reviews list, import status) — next; the stale warning already exists
+3. [x] Strict import and history (committed `dd4c6db`)
+4. [x] Functional UX (**uncommitted** on `feat/p3-review-package`)
 5. [ ] Operating model documentation for the Team subscription
+
+### Phase 3 task 4 — done 2026-11-13 (Windows 11, Node 24.22.2; frontend only)
+- **What changed (Claude Review page, `frontend/src/App.tsx`):** "Previous reviews" table from `GET …/ai/reviews/history` (imported time, this scan or earlier scan with its head commit, suggestion, finding count, stale badge, Show); falls back to this scan's reviews if the route cannot be read. The newest review of the scan on screen is shown by default; a review of an earlier scan is shown only when picked, with the stale warning and a line saying it does not describe the scan on screen. "Static scan and imported review, side by side" panel: static suspicions and imported findings labelled apart, linked through `related_static_finding_ids`, with "Test evidence: none". The import result (success, or the API's reason for 409 / 413 / 422, or the local size refusal) is shown next to the import control instead of the page banner.
+- **Files:** `frontend/src/App.tsx`, `App.test.tsx` (12 new tests, 4 adjusted because a finding title now appears twice), `types.ts` (`current_scan`), `bitbucket.css`, `test/setup.ts` (`Blob.text` for jsdom, test environment only).
+- **Tests:** `cd frontend && npm test` → 119 passed (7 files); `npm run build` → ✓ (240.00 kB JS). Backend not re-run: no backend file changed since the 299-passed run of task 3.
+- **Limits / NOT TESTED:** not viewed in a real browser (layout, narrow screens); the file upload was exercised in jsdom with a stubbed API only; no real Claude Code review was imported. `App.tsx` was not split into a separate page component.
 
 ### Phase 3 task 3 — done 2026-11-13 (Windows 11, Python from `.venv`, Node 24.22.2)
 - **What changed:** a review already imported for a scan is refused (409; compared by a digest of the review content, so key order and whitespace do not matter). Every served review carries `scan_id` and `scan_binding` (the scan's binding, read at response time, never stored in the review): when a pull request's head moves, the scan and therefore its reviews show as stale. New route `GET /api/scans/{id}/ai/reviews/history`: reviews across all stored scans of the same pull request, each with its own scan's binding and `current_scan`. A review made for an older scan is refused for a newer scan of the same pull request. The Claude Review page shows a "This review is stale" warning with the commit the review was made for.

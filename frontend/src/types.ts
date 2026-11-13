@@ -181,6 +181,8 @@ export interface AIReview {
   /** Served beside the review, never stored in it: the binding of the scan the review was made for.
    *  `stale: true` means the pull request has new commits since, so the review is outdated. */
   scan_binding?: Binding;
+  /** History route only: whether the review belongs to the scan that was asked about. */
+  current_scan?: boolean;
   /** v2 only: what the reviewer could not see. */
   missing_context?: string[];
   scan_id: string;

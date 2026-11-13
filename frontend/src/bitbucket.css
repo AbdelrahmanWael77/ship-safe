@@ -86,3 +86,12 @@
 .ai-validation p{margin:5px 0 0;font-size:11.5px;line-height:1.6;color:#b3c3d4}
 .ai-patch pre{margin:6px 0 0;font:11px/1.5 Consolas,monospace;white-space:pre-wrap;word-break:break-word;color:#cfe0f5;max-height:260px;overflow:auto}
 .ai-missing-head{margin-top:16px}
+.ai-history,.ai-compare{margin-bottom:17px}
+.ai-import-status{margin:10px 0 0;font-size:11.5px;line-height:1.55}
+.ai-import-status.success{color:#66e7d0}
+.ai-import-status.error{color:#ffb5c0}
+.ai-compare-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;padding:4px 21px 18px}
+.ai-compare-item{display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-top:1px solid #29384e;font-size:11.5px}
+.ai-compare-item>span{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;color:#dbe7f5}
+.ai-compare-item small{color:#8194af;font-size:10.5px;word-break:break-word}
+@media(max-width:900px){.ai-compare-grid{grid-template-columns:1fr}}

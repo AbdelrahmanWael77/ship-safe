@@ -256,7 +256,7 @@ describe('imported Claude review (schema v2)', () => {
     await start({ [`/api/scans/${report.id}/ai/reviews`]: { body: [reviewV2()] } })
     await userEvent.click(primaryNav().getByRole('button', { name: /Claude Review/ }))
 
-    expect(await screen.findByText('Ownership guard appears removed')).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Ownership guard appears removed' })).toBeVisible()
     expect(screen.getByText('F1')).toBeVisible()
     expect(screen.getByText('SUSPECTED · UNVERIFIED')).toBeVisible()
     expect(screen.getByText('UNVERIFIED AI SUGGESTIONS')).toBeVisible()
@@ -279,14 +279,14 @@ describe('imported Claude review (schema v2)', () => {
     expect(within(alert).getByRole('heading', { name: /This review is stale/ })).toBeVisible()
     expect(within(alert).getByText('b'.repeat(40))).toBeVisible()
     expect(alert.querySelector('[data-stale]')).toHaveAttribute('data-stale', 'stale-recorded')
-    expect(screen.getByText('Ownership guard appears removed')).toBeVisible()  // still shown, as history
+    expect(screen.getByRole('heading', { name: 'Ownership guard appears removed' })).toBeVisible()  // still shown, as history
     expect(api.count(reviews)).toBe(1)
   })
 
   test('a review of a scan that is not stale shows no stale warning', async () => {
     await start({ [`/api/scans/${report.id}/ai/reviews`]: { body: [{ ...reviewV2(), scan_binding: { ...pullRequestHistoryItem().binding!, stale: false } }] } })
     await userEvent.click(primaryNav().getByRole('button', { name: /Claude Review/ }))
-    await screen.findByText('Ownership guard appears removed')
+    await screen.findByRole('heading', { name: 'Ownership guard appears removed' })
     expect(screen.queryByText(/This review is stale/)).not.toBeInTheDocument()
   })
 
@@ -295,10 +295,147 @@ describe('imported Claude review (schema v2)', () => {
     const { id: _i, status: _s, suggested_validation: _v, proposed_patch: _p, ...finding } = rest.findings[0]
     await start({ [`/api/scans/${report.id}/ai/reviews`]: { body: [{ ...rest, schema_version: 'shipsafe.ai-review.v1', findings: [finding] }] } })
     await userEvent.click(primaryNav().getByRole('button', { name: /Claude Review/ }))
-    expect(await screen.findByText('Ownership guard appears removed')).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Ownership guard appears removed' })).toBeVisible()
     expect(screen.getByText('SUSPECTED · UNVERIFIED')).toBeVisible()
     expect(screen.queryByText(/How to validate/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Proposed patch/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Context the reviewer did not have/)).not.toBeInTheDocument()
+  })
+})
+
+describe('Claude Review page: history, side by side, import status', () => {
+  const reviews = `/api/scans/${report.id}/ai/reviews`
+  const base = (): AIReview => ({
+    id: 'current', imported_at: '2026-11-13T12:00:00+00:00', source: 'user_imported_json_unverified_provenance',
+    verification_status: 'not_independently_verified', tests_executed: false, schema_version: 'shipsafe.ai-review.v2',
+    scan_id: report.id, context_digest: '0'.repeat(64), summary: 'Review of the scan on screen.', recommendation: 'manual_review',
+    findings: [
+      { id: 'F1', status: 'suspected', title: 'Linked AI finding', severity: 'high', category: 'Authorization', file: report.files[0].path, line: 3,
+        evidence: 'evidence', rationale: 'Rationale long enough.', recommendation: 'Do something.', confidence: 'low',
+        related_static_finding_ids: [report.findings[0].id], suggested_validation: 'Check it by hand.' },
+      { id: 'F2', status: 'suspected', title: 'Extra AI finding', severity: 'low', category: 'Validation', file: report.files[0].path, line: null,
+        evidence: 'evidence', rationale: 'Rationale long enough.', recommendation: 'Do something.', confidence: 'low',
+        related_static_finding_ids: [], suggested_validation: 'Check it by hand.' },
+    ],
+    test_ideas: [], limitations: ['No tests were executed.'], missing_context: [],
+  })
+  const earlier = (): AIReview => ({
+    ...base(), id: 'earlier', imported_at: '2026-11-12T12:00:00+00:00', scan_id: 'older-scan', summary: 'Review of an earlier scan.',
+    recommendation: 'block_release', findings: [{ ...base().findings[1], title: 'Finding from the earlier scan' }],
+    scan_binding: { ...pullRequestHistoryItem().binding!, stale: true, stale_at: '2026-11-13T09:00:00+00:00' }, current_scan: false,
+  })
+  const openPage = async (routes: Routes) => {
+    const api = await start(routes)
+    await userEvent.click(primaryNav().getByRole('button', { name: /Claude Review/ }))
+    return api
+  }
+  const history = () => within(screen.getByRole('region', { name: 'Previous reviews' }))
+  const compare = () => within(screen.getByRole('region', { name: 'Static scan and imported review' }))
+
+  test('previous reviews list every import; the newest review of this scan is shown by default', async () => {
+    await openPage({ [reviews]: { body: [base()] }, [`${reviews}/history`]: { body: [{ ...base(), current_scan: true }, earlier()] } })
+    await screen.findByRole('heading', { name: 'Linked AI finding' })
+    const rows = history().getAllByRole('row').slice(1)
+    expect(rows).toHaveLength(2)
+    expect(within(rows[0]).getByText('This scan')).toBeVisible()
+    expect(within(rows[0]).getByRole('button', { name: /Shown below/ })).toBeDisabled()
+    expect(within(rows[1]).getByText(/Earlier scan · head/)).toBeVisible()
+    expect(within(rows[1]).getByText('bbbbbbbbbbbb')).toBeVisible()
+    expect(within(rows[1]).getByText('Block release')).toBeVisible()
+    expect(rows[1].querySelector('[data-stale]')).toHaveAttribute('data-stale', 'stale-recorded')
+    expect(screen.queryByText(/This review is stale/)).not.toBeInTheDocument()
+  })
+
+  test('picking an earlier review shows it as stale and as not describing the scan on screen', async () => {
+    await openPage({ [reviews]: { body: [base()] }, [`${reviews}/history`]: { body: [{ ...base(), current_scan: true }, earlier()] } })
+    await screen.findByRole('heading', { name: 'Linked AI finding' })
+    await userEvent.click(history().getByRole('button', { name: /^Show review imported/ }))
+
+    expect(await screen.findByRole('heading', { name: 'Finding from the earlier scan' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Linked AI finding' })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('alert')).getByRole('heading', { name: /This review is stale/ })).toBeVisible()
+    expect(screen.getByText(/From an earlier scan of this pull request/)).toBeVisible()
+    expect(compare().getByText(/belongs to an earlier scan/)).toBeVisible()
+    expect(compare().queryByText(report.findings[0].title)).not.toBeInTheDocument()  // not compared with this scan's findings
+  })
+
+  test('reviews of earlier scans are listed but never shown by default when this scan has none', async () => {
+    await openPage({ [`${reviews}/history`]: { body: [earlier()] } })
+    expect(await screen.findByRole('heading', { name: 'No Claude review imported yet' })).toBeVisible()
+    expect(history().getAllByRole('row').slice(1)).toHaveLength(1)
+    expect(screen.queryByRole('heading', { name: 'Finding from the earlier scan' })).not.toBeInTheDocument()
+  })
+
+  test('without the history route the page falls back to the reviews of this scan', async () => {
+    await openPage({ [reviews]: { body: [base()] } })
+    await screen.findByRole('heading', { name: 'Linked AI finding' })
+    expect(history().getAllByRole('row').slice(1)).toHaveLength(1)
+    expect(document.querySelector('.alert-error')).toBeNull()
+  })
+
+  test('side by side: static suspicions and imported findings are labelled apart and linked by id', async () => {
+    await openPage({ [reviews]: { body: [base()] } })
+    await screen.findByRole('heading', { name: 'Linked AI finding' })
+    const panel = compare()
+    expect(panel.getByText('STATIC SUSPICIONS · HEURISTIC SCAN')).toBeVisible()
+    expect(panel.getByText('IMPORTED AI FINDINGS · UNVERIFIED')).toBeVisible()
+    expect(panel.getByText(/Test evidence: none/)).toBeVisible()
+    for (const finding of report.findings) expect(panel.getByText(finding.title)).toBeVisible()
+    expect(panel.getAllByText('Referenced by the review')).toHaveLength(1)
+    expect(panel.getByText(new RegExp(`relates to static: ${report.findings[0].title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))).toBeVisible()
+    expect(panel.getAllByText('Not in the static scan')).toHaveLength(1)
+  })
+
+  test('the source link of an AI finding opens that file in Code changes', async () => {
+    await openPage({ [reviews]: { body: [base()] } })
+    const card = (await screen.findByRole('heading', { name: 'Linked AI finding' })).closest('.ai-finding') as HTMLElement
+    await userEvent.click(within(card).getByRole('button', { name: new RegExp(report.files[0].path.replace(/[.]/g, '\\.')) }))
+    expect(await screen.findByRole('region', { name: new RegExp(`Git diff for ${report.files[0].path}`) })).toBeVisible()
+  })
+
+  const chooseFile = async (content: string) => {
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    await userEvent.upload(input, new File([content], 'claude-review.json', { type: 'application/json' }))
+    await userEvent.click(screen.getByRole('button', { name: /Import review/ }))
+  }
+
+  test('a successful import is confirmed next to the control and joins the history', async () => {
+    const api = await openPage({ [`POST ${reviews}`]: { status: 201, body: base() } })
+    await screen.findByRole('heading', { name: 'No Claude review imported yet' })
+    await chooseFile(JSON.stringify({ any: 'json' }))
+
+    const status = await screen.findByRole('status')
+    expect(status).toHaveTextContent(/Imported for scan .* 2 proposed findings\. The review is unverified and no tests were run\./)
+    expect(status.closest('.ai-step')).not.toBeNull()
+    expect(await screen.findByRole('heading', { name: 'Linked AI finding' })).toBeVisible()
+    expect(history().getAllByRole('row').slice(1)).toHaveLength(1)
+    expect(api.count(`POST ${reviews}`)).toBe(1)
+    expect(document.querySelector('.alert-error')).toBeNull()
+  })
+
+  test.each([
+    [409, 'This review was already imported for this scan. Nothing was added.'],
+    [409, 'Review scan ID or context digest does not match this scan. Export a fresh handoff bundle.'],
+    [413, 'Review JSON is larger than the 256 KiB import limit'],
+    [422, 'Invalid Claude review JSON: 1 validation error'],
+  ])('a rejected import (%i) shows the API’s reason next to the control and adds nothing', async (status, detail) => {
+    await openPage({ [`POST ${reviews}`]: { status, body: { detail } } })
+    await screen.findByRole('heading', { name: 'No Claude review imported yet' })
+    await chooseFile('{}')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(`Not imported: ${detail}`)
+    expect(alert.closest('.ai-step')).not.toBeNull()
+    expect(screen.getByRole('heading', { name: 'No Claude review imported yet' })).toBeVisible()
+    expect(screen.queryByRole('region', { name: 'Previous reviews' })).not.toBeInTheDocument()
+    expect(document.querySelector('.alert-error')).toBeNull()
+  })
+
+  test('a file over 256 KiB is refused without a request', async () => {
+    const api = await openPage({})
+    await screen.findByRole('heading', { name: 'No Claude review imported yet' })
+    await chooseFile('x'.repeat(256 * 1024 + 1))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/too large/)
+    expect(api.count(`POST ${reviews}`)).toBe(0)
   })
 })

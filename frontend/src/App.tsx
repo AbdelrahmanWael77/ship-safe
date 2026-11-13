@@ -85,6 +85,9 @@ export default function App() {
   const [importingAI, setImportingAI] = useState(false)
   const [shareAckRequired, setShareAckRequired] = useState(true)
   const [shareAck, setShareAck] = useState(false)
+  const [reviewHistory, setReviewHistory] = useState<AIReview[] | null>(null)
+  const [shownReviewId, setShownReviewId] = useState<string | null>(null)
+  const [importStatus, setImportStatus] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
   const [bitbucketSelection, setBitbucketSelection] = useState<BitbucketSelection>(INITIAL_SELECTION)
   const bitbucketNavigate: BitbucketNavigate = (next, change) => {
     if (change) setBitbucketSelection(previous => ({ ...previous, ...change }))
@@ -131,6 +134,12 @@ export default function App() {
       .then(rows => { if (active) setAIReviews(rows) })
       .catch(exc => { if (active) setError(exc instanceof Error ? exc.message : String(exc)) })
     setAIFile(null)
+    // Reviews of every stored scan of the same pull request (or of this scan only).
+    // If this cannot be read, the page falls back to the reviews of this scan.
+    setReviewHistory(null); setShownReviewId(null); setImportStatus(null)
+    api<AIReview[]>(`/api/scans/${scanID}/ai/reviews/history`)
+      .then(rows => { if (active && Array.isArray(rows)) setReviewHistory(rows) })
+      .catch(() => undefined)
     // Whether exporting this scan's source code needs an explicit confirmation.
     // Unknown (request failed, older backend) is treated as "needed".
     setShareAck(false); setShareAckRequired(true)
@@ -142,18 +151,21 @@ export default function App() {
 
   const importAIReview = async () => {
     if (!report || !aiFile) return
-    if (aiFile.size > 256 * 1024) { setError('Review file is too large (max 256 KiB).'); return }
-    setImportingAI(true); setNotice(null); setError(null)
+    // The result is shown next to the import control, not in the page banner.
+    if (aiFile.size > 256 * 1024) { setImportStatus({ kind: 'error', message: 'Not imported: the review file is too large (max 256 KiB).' }); return }
+    setImportingAI(true); setImportStatus(null)
     try {
       const source = await aiFile.text()
       const review = await api<AIReview>(`/api/scans/${report.id}/ai/reviews`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: source,
       })
       setAIReviews(previous => [review, ...previous])
+      setReviewHistory(previous => (previous ? [{ ...review, current_scan: true }, ...previous] : previous))
+      setShownReviewId(null)
       setAIFile(null)
-      setNotice(`Review imported for scan ${report.id.slice(0, 8)}. AI analysis is unverified and no tests were run.`)
+      setImportStatus({ kind: 'success', message: `Imported for scan ${report.id.slice(0, 8)}: ${review.findings.length} proposed finding${review.findings.length !== 1 ? 's' : ''}. The review is unverified and no tests were run.` })
     } catch (exc) {
-      setError(exc instanceof Error ? exc.message : String(exc))
+      setImportStatus({ kind: 'error', message: `Not imported: ${exc instanceof Error ? exc.message : String(exc)}` })
     } finally { setImportingAI(false) }
   }
 
@@ -189,6 +201,14 @@ export default function App() {
   // A Bitbucket pull request scan is never labelled as the local demo.
   const pullRequestBinding = report?.binding && report.binding.provider === 'bitbucket-cloud' && report.binding.pull_request_id != null ? report.binding : null
   const latestAI = aiReviews[0]
+  // Claude Review page: every known review (across the pull request's scans when the
+  // history could be read), and the one on screen. By default that is the newest review
+  // of THIS scan; a review of an earlier scan is shown only when the person picks it.
+  const reviewList = reviewHistory ?? aiReviews
+  const shownAI = reviewList.find(item => item.id === shownReviewId) ?? latestAI
+  const shownIsOfThisScan = !!shownAI && shownAI.scan_id === report?.id
+  const staticTitles = new Map((report?.findings ?? []).map(item => [item.id, item.title]))
+  const raisedByReview = new Set(shownIsOfThisScan ? shownAI.findings.flatMap(item => item.related_static_finding_ids) : [])
   const filteredFindings = report?.findings.filter(f => `${f.title} ${f.category} ${f.file}`.toLowerCase().includes(search.toLowerCase())) || []
 
   return <div className="app-layout">
@@ -286,15 +306,44 @@ export default function App() {
             <div className="ai-steps">
               <div className="panel ai-step"><div className="ai-step-top"><span className="ai-step-num">01</span><FileArchive size={19}/></div><h3>Export review package</h3><p>Download Git evidence, the structured JSON response template, and review instructions for scan <code>{report.id.slice(0, 8)}</code>.</p>{shareAckRequired && <label className="ai-share-ack"><input type="checkbox" checked={shareAck} onChange={e => setShareAck(e.target.checked)}/><span>This package contains source code that is not the synthetic demo. I am allowed to share it with Claude Code, and I will check it for secrets first (redaction is best-effort).</span></label>}{shareAckRequired && !shareAck ? <button className="secondary-button ai-action" disabled><Download size={16}/> Download handoff ZIP</button> : <a className="secondary-button ai-action" href={`${API}/api/scans/${report.id}/ai/handoff${shareAckRequired ? '?acknowledge_source_sharing=true' : ''}`} download><Download size={16}/> Download handoff ZIP</a>}</div>
               <div className="panel ai-step"><div className="ai-step-top"><span className="ai-step-num">02</span><Terminal size={19}/></div><h3>Review in Claude Code</h3><p>Extract the ZIP. Open a terminal in the extracted folder, run <code>claude</code>, and ask it to read the instructions and write <code>claude-review.json</code>.</p><div className="ai-command"><code>claude</code><button title="Copy CLI instruction" onClick={() => { void navigator.clipboard.writeText('Read REVIEW_INSTRUCTIONS.md and review-input.json in this directory. Follow the instructions and write claude-review.json. Do not run code or modify any other files.') ; setNotice('Copied instructions for Claude Code.') }}><Copy size={15}/></button></div></div>
-              <div className="panel ai-step"><div className="ai-step-top"><span className="ai-step-num">03</span><UploadCloud size={19}/></div><h3>Import the JSON result</h3><p>Inspect Claude's output before importing. The backend checks its schema, scan ID, context digest, and referenced files.</p><label className="ai-file-label"><input type="file" accept=".json,application/json" onChange={e => setAIFile(e.target.files?.[0] || null)}/><UploadCloud size={15}/>{aiFile ? aiFile.name : 'Choose claude-review.json'}</label><button className="primary-button ai-action" disabled={!aiFile || importingAI} onClick={importAIReview}>{importingAI ? <RefreshCw size={16} className="spin"/> : <Check size={16}/>} {importingAI ? 'Importing…' : 'Import review'}</button></div>
+              <div className="panel ai-step"><div className="ai-step-top"><span className="ai-step-num">03</span><UploadCloud size={19}/></div><h3>Import the JSON result</h3><p>Inspect Claude's output before importing. The backend checks its schema, scan ID, context digest, and referenced files.</p><label className="ai-file-label"><input type="file" accept=".json,application/json" onChange={e => setAIFile(e.target.files?.[0] || null)}/><UploadCloud size={15}/>{aiFile ? aiFile.name : 'Choose claude-review.json'}</label><button className="primary-button ai-action" disabled={!aiFile || importingAI} onClick={importAIReview}>{importingAI ? <RefreshCw size={16} className="spin"/> : <Check size={16}/>} {importingAI ? 'Importing…' : 'Import review'}</button>{importStatus && <p className={`ai-import-status ${importStatus.kind}`} role={importStatus.kind === 'error' ? 'alert' : 'status'}>{importStatus.message}</p>}</div>
             </div>
             <div className="ai-warning"><Info size={18}/><span><strong>Security & evidence boundary:</strong> The package contains source-code diffs. Only share authorized code with Claude. Import does not prove who authored the JSON, confirm vulnerabilities, run tests, or grant approval to release.</span></div>
-            <div className="ai-report-heading"><div><h2>Imported AI review</h2><p>Associated only with {report.base_ref} → {report.head_ref} · context digest verified</p></div>{aiReviews.length > 0 && <Pill kind="muted">{aiReviews.length} import{aiReviews.length !== 1 ? 's' : ''}</Pill>}</div>
-            {latestAI ? <>
-              {latestAI.scan_binding?.stale && <div className="panel bb-state bb-warning-panel" role="alert"><AlertTriangle size={22}/><div><h3>This review is stale <StaleBadge binding={latestAI.scan_binding}/></h3><p>The pull request has new commits since the scan this review was made for (head <code>{latestAI.scan_binding.head_commit}</code>). It does not describe the current code. Scan the pull request again and review the new scan.</p></div></div>}
-              <div className="panel ai-review-summary"><div className="ai-review-title"><div><Pill kind="warning">UNVERIFIED AI SUGGESTIONS</Pill><h3>{latestAI.recommendation === 'block_release' ? 'Suggested: Block release' : latestAI.recommendation === 'manual_review' ? 'Suggested: Manual review' : 'Insufficient evidence'}</h3><p>Imported {new Date(latestAI.imported_at).toLocaleString()} · Source provenance not verified</p></div><div className="ai-review-count"><strong>{latestAI.findings.length}</strong><span>AI findings</span></div></div><p className="ai-review-summary-text">{latestAI.summary}</p><div className="ai-verification-note"><ShieldQuestion size={16}/> No tests were executed as part of this import. This assessment cannot override the static scan, change risk score, or human review.</div></div>
-              {latestAI.findings.length > 0 ? <div className="ai-findings-grid">{latestAI.findings.map((f,i) => <div className="panel ai-finding" key={`${i}-${f.title}`}><div className="ai-finding-head"><Severity level={f.severity}/><Pill kind="muted">{f.confidence} confidence</Pill>{f.id && <Pill kind="muted">{f.id}</Pill>}<Pill kind="warning">SUSPECTED · UNVERIFIED</Pill></div><h3>{f.title}</h3><p className="ai-finding-category">{f.category} · <button className="text-link" onClick={() => goFile(f.file)}>{f.file}{f.line ? `:${f.line}` : ''}<ArrowUpRight size={13}/></button></p><p>{f.rationale}</p><div className="evidence"><div className="micro-label"><Terminal size={13}/> Reported code evidence</div><code>{f.evidence}</code></div><div className="ai-advice"><Sparkles size={15}/><span>{f.recommendation}</span></div>{f.suggested_validation && <div className="ai-validation"><div className="micro-label"><FlaskConical size={13}/> How to validate (not done)</div><p>{f.suggested_validation}</p></div>}{f.proposed_patch && <div className="evidence ai-patch"><div className="micro-label"><FileDiff size={13}/> Proposed patch · unverified · not applied by ShipSafe</div><pre>{f.proposed_patch}</pre></div>}</div>)}</div> : <Empty icon={ShieldQuestion} title="No risks proposed in imported review" description="This does not establish that the code is safe. Check the review's limitations and independent testing."/>}
-              <div className="ai-bottom-grid"><div className="panel ai-list-panel"><h3><FlaskConical size={18}/> Suggested regression tests <Pill kind="muted">NOT RUN</Pill></h3>{latestAI.test_ideas.map((idea,i) => <div className="ai-list-item" key={i}><strong>{idea.title}</strong><p>{idea.scenario}</p><small>Expected: {idea.expected_behavior}{idea.file ? ` · ${idea.file}` : ''}</small></div>)}{!latestAI.test_ideas.length && <p className="small-para">No test ideas provided.</p>}</div><div className="panel ai-list-panel"><h3><AlertCircle size={18}/> Review limitations</h3>{latestAI.limitations.map((item,i) => <div className="ai-limitation" key={i}><Info size={16}/><span>{item}</span></div>)}{!!latestAI.missing_context?.length && <><h3 className="ai-missing-head"><ShieldQuestion size={18}/> Context the reviewer did not have</h3>{latestAI.missing_context.map((item,i) => <div className="ai-limitation" key={`m${i}`}><Info size={16}/><span>{item}</span></div>)}</>}</div></div>
+            {reviewList.length > 0 && <div className="panel ai-history" role="region" aria-label="Previous reviews">
+              <div className="panel-head"><div><h3>Previous reviews</h3><p>Every import is kept. A review belongs to the scan it was made for and goes stale with it.</p></div><Pill kind="muted">{reviewList.length} import{reviewList.length !== 1 ? 's' : ''}</Pill></div>
+              <div className="history-table-wrap"><table className="history-table bb-table"><thead><tr><th>Imported</th><th>Scan</th><th>Suggestion</th><th>AI findings</th><th>State</th><th><span className="visually-hidden">Actions</span></th></tr></thead><tbody>
+                {reviewList.map(item => <tr key={item.id} className={shownAI?.id === item.id ? 'bb-row-open' : ''}>
+                  <td>{new Date(item.imported_at).toLocaleString()}</td>
+                  <td>{item.scan_id === report.id ? 'This scan' : <>Earlier scan · head <code>{item.scan_binding?.head_commit?.slice(0, 12) ?? 'unknown'}</code></>}</td>
+                  <td>{item.recommendation === 'block_release' ? 'Block release' : item.recommendation === 'manual_review' ? 'Manual review' : 'Insufficient evidence'}</td>
+                  <td>{item.findings.length}</td>
+                  <td>{item.scan_binding?.pull_request_id != null ? <StaleBadge binding={item.scan_binding}/> : <span className="bb-muted">Local scan</span>}</td>
+                  <td><button className="table-action" disabled={shownAI?.id === item.id} onClick={() => setShownReviewId(item.id)}>{shownAI?.id === item.id ? 'Shown below' : 'Show'}<span className="visually-hidden"> review imported {new Date(item.imported_at).toLocaleString()}</span></button></td>
+                </tr>)}
+              </tbody></table></div>
+            </div>}
+            <div className="ai-report-heading"><div><h2>Imported AI review</h2><p>{shownAI && !shownIsOfThisScan ? 'From an earlier scan of this pull request. It does not describe the scan on screen.' : `Associated only with ${report.base_ref} → ${report.head_ref} · context digest verified`}</p></div>{aiReviews.length > 0 && <Pill kind="muted">{aiReviews.length} import{aiReviews.length !== 1 ? 's' : ''} for this scan</Pill>}</div>
+            {shownAI ? <>
+              {shownAI.scan_binding?.stale && <div className="panel bb-state bb-warning-panel" role="alert"><AlertTriangle size={22}/><div><h3>This review is stale <StaleBadge binding={shownAI.scan_binding}/></h3><p>The pull request has new commits since the scan this review was made for (head <code>{shownAI.scan_binding.head_commit}</code>). It does not describe the current code. Scan the pull request again and review the new scan.</p></div></div>}
+              <div className="panel ai-review-summary"><div className="ai-review-title"><div><Pill kind="warning">UNVERIFIED AI SUGGESTIONS</Pill><h3>{shownAI.recommendation === 'block_release' ? 'Suggested: Block release' : shownAI.recommendation === 'manual_review' ? 'Suggested: Manual review' : 'Insufficient evidence'}</h3><p>Imported {new Date(shownAI.imported_at).toLocaleString()} · Source provenance not verified</p></div><div className="ai-review-count"><strong>{shownAI.findings.length}</strong><span>AI findings</span></div></div><p className="ai-review-summary-text">{shownAI.summary}</p><div className="ai-verification-note"><ShieldQuestion size={16}/> No tests were executed as part of this import. This assessment cannot override the static scan, change risk score, or human review.</div></div>
+              {shownAI.findings.length > 0 ? <div className="ai-findings-grid">{shownAI.findings.map((f,i) => <div className="panel ai-finding" key={`${i}-${f.title}`}><div className="ai-finding-head"><Severity level={f.severity}/><Pill kind="muted">{f.confidence} confidence</Pill>{f.id && <Pill kind="muted">{f.id}</Pill>}<Pill kind="warning">SUSPECTED · UNVERIFIED</Pill></div><h3>{f.title}</h3><p className="ai-finding-category">{f.category} · <button className="text-link" onClick={() => goFile(f.file)}>{f.file}{f.line ? `:${f.line}` : ''}<ArrowUpRight size={13}/></button></p><p>{f.rationale}</p><div className="evidence"><div className="micro-label"><Terminal size={13}/> Reported code evidence</div><code>{f.evidence}</code></div><div className="ai-advice"><Sparkles size={15}/><span>{f.recommendation}</span></div>{f.suggested_validation && <div className="ai-validation"><div className="micro-label"><FlaskConical size={13}/> How to validate (not done)</div><p>{f.suggested_validation}</p></div>}{f.proposed_patch && <div className="evidence ai-patch"><div className="micro-label"><FileDiff size={13}/> Proposed patch · unverified · not applied by ShipSafe</div><pre>{f.proposed_patch}</pre></div>}</div>)}</div> : <Empty icon={ShieldQuestion} title="No risks proposed in imported review" description="This does not establish that the code is safe. Check the review's limitations and independent testing."/>}
+              <div className="ai-bottom-grid"><div className="panel ai-list-panel"><h3><FlaskConical size={18}/> Suggested regression tests <Pill kind="muted">NOT RUN</Pill></h3>{shownAI.test_ideas.map((idea,i) => <div className="ai-list-item" key={i}><strong>{idea.title}</strong><p>{idea.scenario}</p><small>Expected: {idea.expected_behavior}{idea.file ? ` · ${idea.file}` : ''}</small></div>)}{!shownAI.test_ideas.length && <p className="small-para">No test ideas provided.</p>}</div><div className="panel ai-list-panel"><h3><AlertCircle size={18}/> Review limitations</h3>{shownAI.limitations.map((item,i) => <div className="ai-limitation" key={i}><Info size={16}/><span>{item}</span></div>)}{!!shownAI.missing_context?.length && <><h3 className="ai-missing-head"><ShieldQuestion size={18}/> Context the reviewer did not have</h3>{shownAI.missing_context.map((item,i) => <div className="ai-limitation" key={`m${i}`}><Info size={16}/><span>{item}</span></div>)}</>}</div></div>
+              <div className="panel ai-compare" role="region" aria-label="Static scan and imported review">
+                <div className="panel-head"><div><h3>Static scan and imported review, side by side</h3><p>Neither column is verified. Test evidence: none. No tests were run by ShipSafe or by the review.</p></div></div>
+                <div className="ai-compare-grid">
+                  <div><div className="micro-label">STATIC SUSPICIONS · HEURISTIC SCAN</div>
+                    {!shownIsOfThisScan ? <p className="muted-small">This review belongs to an earlier scan; the static findings of the scan on screen are not what it was compared with.</p>
+                      : report.findings.length ? report.findings.map(item => <div className="ai-compare-item" key={item.id}><Severity level={item.severity}/><span><strong>{item.title}</strong><small>{item.file}{item.line != null ? `:${item.line}` : ''}</small></span>{raisedByReview.has(item.id) && <Pill kind="muted">Referenced by the review</Pill>}</div>)
+                      : <p className="muted-small">No static pattern flagged.</p>}
+                  </div>
+                  <div><div className="micro-label">IMPORTED AI FINDINGS · UNVERIFIED</div>
+                    {shownAI.findings.length ? shownAI.findings.map((item, index) => {
+                      const related = shownIsOfThisScan ? item.related_static_finding_ids.map(id => staticTitles.get(id)).filter(Boolean) : []
+                      return <div className="ai-compare-item" key={`${index}-${item.title}`}><Severity level={item.severity}/><span><strong>{item.title}</strong><small>{item.file}{item.line ? `:${item.line}` : ''}{related.length ? ` · relates to static: ${related.join('; ')}` : ''}</small></span>{!item.related_static_finding_ids.length && <Pill kind="muted">Not in the static scan</Pill>}</div>
+                    }) : <p className="muted-small">The review proposed no finding.</p>}
+                  </div>
+                </div>
+              </div>
             </> : <div className="panel ai-empty"><div className="ai-empty-icon"><Bot size={32}/></div><h3>No Claude review imported yet</h3><p>Export this scan's handoff bundle and bring back the JSON file created in your own Claude Code session. Your Git analysis will stay intact.</p></div>}
           </div>}
           {page === 'history' && <div className="panel history-panel"><div className="panel-head"><div><h3>Recent analyses</h3><p>Stored in the local SQLite database</p></div><Pill kind="muted">{history.length} saved</Pill></div><div className="history-table-wrap"><table className="history-table"><thead><tr><th>Comparison</th><th>Scanned</th><th>Files</th><th>Findings</th><th>Risk level</th><th></th></tr></thead><tbody>{history.map(row => <tr key={row.id}><td><div className="comparison-cell"><GitPullRequest size={18}/><div><strong>{shortRef(row.head_ref)}</strong><small>{row.base_ref} → {row.head_ref}</small>{row.binding?.pull_request_id != null && <small className="bb-history-pr">Bitbucket · {row.binding.repository_id} · PR #{row.binding.pull_request_id} <StaleBadge binding={row.binding}/></small>}</div></div></td><td>{new Date(row.created_at).toLocaleString()}</td><td>{row.summary.files_changed}</td><td>{row.summary.finding_count}</td><td><Pill kind={riskColor(row.summary.risk_score)}>{row.summary.risk_score}/100</Pill></td><td><button className="table-action" onClick={() => openHistory(row.id)}>Open <ArrowRight size={14}/></button></td></tr>)}</tbody></table></div>{!history.length && <Empty icon={History} title="No saved scans" description="Run your first branch comparison to start building an evidence history."/>}</div>}

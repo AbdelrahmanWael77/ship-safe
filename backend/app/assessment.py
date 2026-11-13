@@ -1,0 +1,205 @@
+"""Phase 5 task 2: an evidence-based release assessment for one scan.
+
+It only arranges what is already stored: static findings (suspicions),
+imported AI reviews (unverified), test proposals with their human decisions,
+and run requests. It adds no judgement of its own and never says a change is
+safe. Every figure comes from the stored rows passed in; nothing is estimated.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+SEVERITIES = ("critical", "high", "medium", "low")
+STATES = {
+    "assessment_unavailable": "Assessment unavailable",
+    "stale": "Stale",
+    "confirmed_regression": "Confirmed regression",
+    "tests_incomplete": "Tests incomplete",
+    "review_required": "Review required",
+}
+#: First match is the headline state; the others that apply are still listed.
+PRECEDENCE = ("assessment_unavailable", "stale", "confirmed_regression", "tests_incomplete", "review_required")
+NEVER_SAFE = ("This assessment does not say the change is safe. It lists what was found, what was only suggested, "
+              "what was actually executed, and what is unknown. A person decides.")
+
+
+def assess(report: dict, binding: dict, reviews: list[dict], proposals: list[dict]) -> dict:
+    """``proposals`` are served proposals, each with a ``runs`` list of served runs."""
+    findings = report.get("findings", [])
+    summary = report.get("summary", {})
+    files = report.get("files", [])
+    runs = [run for proposal in proposals for run in proposal.get("runs", [])]
+    executed = [run for run in runs if run.get("executed")]
+    confirmed = [run for run in executed if run.get("status") == "confirmed_regression"]
+    bound = bool(binding.get("head_commit") and binding.get("base_commit"))
+
+    applies = []
+    if not bound:
+        applies.append("assessment_unavailable")
+    if binding.get("stale"):
+        applies.append("stale")
+    if confirmed:
+        applies.append("confirmed_regression")
+    if not executed:
+        applies.append("tests_incomplete")
+    applies.append("review_required")
+    state = next(name for name in PRECEDENCE if name in applies)
+
+    unknowns = []
+    if not bound:
+        unknowns.append("The scan is not bound to exact commits, so nothing here can be tied to a specific change.")
+    if binding.get("stale"):
+        unknowns.append("The pull request has new commits since this scan. Everything below describes an older change.")
+    elif binding.get("pull_request_id") is not None:
+        unknowns.append("Whether the pull request has moved on is only known as of the last time it was looked at in "
+                        "ShipSafe; this assessment did not ask Bitbucket.")
+    if not executed:
+        unknowns.append("No test was executed by ShipSafe for this scan. There is no pass or fail evidence, no "
+                        "baseline comparison and no confirmed regression.")
+    if any(run.get("status") == "blocked" for run in runs):
+        unknowns.append("Test runs were requested and blocked because no verified isolated runner is available.")
+    if summary.get("truncated") or summary.get("files_omitted"):
+        unknowns.append(f"The scan is incomplete: {int(summary.get('files_omitted') or 0)} changed files are not included.")
+    cut = sum(1 for item in files if item.get("diff_truncated"))
+    if cut:
+        unknowns.append(f"{cut} diff{'s are' if cut != 1 else ' is'} truncated; findings in the cut part were not looked for.")
+    if summary.get("import_analysis_truncated"):
+        unknowns.append("The import analysis was cut, so affected modules may be missing.")
+    unknowns.append("Static findings are heuristic suspicions. None has been confirmed or dismissed by ShipSafe.")
+    if reviews:
+        unknowns.append("Imported AI reviews are unverified text supplied by a person. ShipSafe cannot tell who or what wrote them.")
+    else:
+        unknowns.append("No AI review was imported for this scan.")
+    if any(proposal.get("decisions") for proposal in proposals) or runs:
+        unknowns.append("Names on decisions and run requests are self-declared: ShipSafe has no authentication.")
+
+    latest = reviews[0] if reviews else None
+    return {
+        "scan_id": report.get("id"),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "state": state, "state_label": STATES[state], "states": applies,
+        "statement": NEVER_SAFE,
+        "identity": {
+            "repo_name": report.get("repo_name"), "provider": binding.get("provider"),
+            "repository_id": binding.get("repository_id"), "pull_request_id": binding.get("pull_request_id"),
+            "base_ref": report.get("base_ref"), "head_ref": report.get("head_ref"),
+            "base_commit": binding.get("base_commit"), "head_commit": binding.get("head_commit"),
+            "comparison": binding.get("comparison"), "scanned_at": report.get("created_at"),
+            "stale": bool(binding.get("stale")), "stale_at": binding.get("stale_at"),
+        },
+        "static": {
+            "label": "SUSPECTED (static heuristics, not verified)",
+            "finding_count": len(findings),
+            "by_severity": {level: sum(1 for item in findings if item.get("severity") == level) for level in SEVERITIES},
+            "risk_score": summary.get("risk_score"), "recommendation": summary.get("recommendation"),
+            "files_changed": summary.get("files_changed"),
+            "findings": [{key: item.get(key) for key in ("id", "severity", "category", "title", "file", "line")} for item in findings],
+        },
+        "ai_reviews": {
+            "label": "UNVERIFIED (imported JSON, provenance not verified)",
+            "count": len(reviews),
+            "latest": None if latest is None else {
+                "id": latest.get("id"), "imported_at": latest.get("imported_at"), "schema_version": latest.get("schema_version"),
+                "recommendation": latest.get("recommendation"), "finding_count": len(latest.get("findings", [])),
+                "findings": [{key: item.get(key) for key in ("id", "severity", "category", "title", "file", "line", "confidence")}
+                             for item in latest.get("findings", [])],
+            },
+        },
+        "tests": {
+            "label": "EXECUTED RESULTS ONLY count as test evidence",
+            "repository_test_status": summary.get("test_status"),
+            "proposals": {
+                "count": len(proposals),
+                "by_status": {name: sum(1 for item in proposals if item.get("status") == name) for name in ("pending", "approved", "rejected")},
+                "items": [{
+                    "id": item.get("id"), "target_path": item.get("target_path"), "status": item.get("status"),
+                    "finding_ref": item.get("finding_ref"), "origin": item.get("origin"),
+                    "decisions": [{key: d.get(key) for key in ("decision", "decided_by", "decided_at", "note")} for d in item.get("decisions", [])],
+                } for item in proposals],
+            },
+            "runs": {
+                "requested": len(runs), "blocked": sum(1 for run in runs if run.get("status") == "blocked"),
+                "executed": len(executed), "confirmed_regressions": len(confirmed),
+                "items": [{key: run.get(key) for key in (
+                    "id", "proposal_id", "status", "executed", "requested_by", "requested_at", "runner", "reason",
+                    "started_at", "finished_at", "exit_code")} for run in runs],
+            },
+        },
+        "unknowns": unknowns,
+    }
+
+
+def _cell(value: object) -> str:
+    """Text for a Markdown table cell or line: no pipes, backticks or line breaks from untrusted data."""
+    text = "" if value is None else str(value)
+    return text.replace("\\", "\\\\").replace("|", "\\|").replace("`", "'").replace("\r", " ").replace("\n", " ").replace("<", "&lt;")
+
+
+def render_markdown(assessment: dict) -> str:
+    """A readable report of ``assess()``'s result. Same facts, no additions."""
+    identity, static, ai, tests = (assessment[key] for key in ("identity", "static", "ai_reviews", "tests"))
+    lines = [
+        "# ShipSafe release assessment",
+        "",
+        f"**State: {assessment['state_label']}**" + (
+            f" (also: {', '.join(STATES[name] for name in assessment['states'] if name != assessment['state'])})"
+            if len(assessment["states"]) > 1 else ""),
+        "",
+        assessment["statement"],
+        "",
+        "## What was assessed",
+        "",
+        f"- Scan: {_cell(assessment['scan_id'])} (scanned {_cell(identity['scanned_at'])}; report generated {_cell(assessment['generated_at'])})",
+        f"- Repository: {_cell(identity['repo_name'])} ({_cell(identity['provider'])}{', ' + _cell(identity['repository_id']) if identity['repository_id'] else ''})",
+    ]
+    if identity["pull_request_id"] is not None:
+        lines.append(f"- Pull request: {_cell(identity['pull_request_id'])}")
+    lines += [
+        f"- Change: {_cell(identity['base_ref'])} -> {_cell(identity['head_ref'])} ({_cell(identity['comparison'])})",
+        f"- Base commit: {_cell(identity['base_commit']) or 'not recorded'}",
+        f"- Head commit: {_cell(identity['head_commit']) or 'not recorded'}",
+        f"- Stale: {'yes, since ' + _cell(identity['stale_at']) if identity['stale'] else 'not known to be stale'}",
+        "",
+        f"## Static findings — {static['label']}",
+        "",
+        f"{static['finding_count']} findings in {_cell(static['files_changed'])} changed files. Heuristic risk score "
+        f"{_cell(static['risk_score'])}/100 ({_cell(static['recommendation'])}).",
+        "",
+    ]
+    if static["findings"]:
+        lines += ["| Severity | Finding | File | Category |", "|---|---|---|---|"]
+        lines += [f"| {_cell(item['severity'])} | {_cell(item['title'])} | {_cell(item['file'])}"
+                  f"{':' + _cell(item['line']) if item['line'] is not None else ''} | {_cell(item['category'])} |"
+                  for item in static["findings"]]
+    else:
+        lines.append("No known pattern was flagged. That is not evidence of safety.")
+    lines += ["", f"## Imported AI reviews — {ai['label']}", ""]
+    if ai["latest"] is None:
+        lines.append("None imported.")
+    else:
+        latest = ai["latest"]
+        lines += [f"{ai['count']} imported. Latest: {_cell(latest['imported_at'])}, suggestion "
+                  f"{_cell(latest['recommendation'])}, {latest['finding_count']} proposed findings.", ""]
+        if latest["findings"]:
+            lines += ["| Severity | Proposed finding | File | Confidence |", "|---|---|---|---|"]
+            lines += [f"| {_cell(item['severity'])} | {_cell(item['title'])} | {_cell(item['file'])}"
+                      f"{':' + _cell(item['line']) if item['line'] is not None else ''} | {_cell(item['confidence'])} |"
+                      for item in latest["findings"]]
+    runs, proposals = tests["runs"], tests["proposals"]
+    lines += [
+        "", "## Tests — only executed results count as evidence", "",
+        f"- Repository test status recorded by the scan: {_cell(tests['repository_test_status'])}",
+        f"- Proposed tests: {proposals['count']} (approved {proposals['by_status']['approved']}, rejected "
+        f"{proposals['by_status']['rejected']}, pending {proposals['by_status']['pending']})",
+        f"- Run requests: {runs['requested']} (blocked {runs['blocked']}, executed {runs['executed']})",
+        f"- Confirmed regressions: {runs['confirmed_regressions']}",
+    ]
+    for item in proposals["items"]:
+        decisions = "; ".join(f"{_cell(d['decision'])} by {_cell(d['decided_by'])} at {_cell(d['decided_at'])}" for d in item["decisions"])
+        lines.append(f"- Proposal {_cell(item['target_path'])}: {_cell(item['status'])}" + (f" ({decisions})" if decisions else ""))
+    for run in runs["items"]:
+        lines.append(f"- Run requested by {_cell(run['requested_by'])} at {_cell(run['requested_at'])}: "
+                     f"{'executed, ' + _cell(run['status']) if run['executed'] else 'BLOCKED, not executed'}"
+                     + (f" — {_cell(run['reason'])}" if run.get("reason") else ""))
+    lines += ["", "## What is not known", ""] + [f"- {_cell(item)}" for item in assessment["unknowns"]] + [""]
+    return "\n".join(lines)

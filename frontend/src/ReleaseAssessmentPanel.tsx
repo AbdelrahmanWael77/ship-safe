@@ -1,0 +1,102 @@
+// Phase 5: the evidence-based release assessment of the scan on screen, as
+// GET /api/scans/{id}/assessment returns it. It arranges stored evidence and
+// keeps its three kinds apart: static suspicions, imported unverified AI
+// reviews, and executed test results. It never says a change is safe.
+import { AlertCircle, Download, RefreshCw } from 'lucide-react'
+import { api, API_BASE } from './api'
+import { useLoad } from './bitbucket/useLoad'
+import { Pill, Severity } from './components'
+import type { ReleaseAssessment } from './types'
+
+const STATE_KIND: Record<ReleaseAssessment['state'], string> = {
+  assessment_unavailable: 'muted', stale: 'danger', confirmed_regression: 'danger', tests_incomplete: 'warning', review_required: 'warning',
+}
+const STATE_LABEL: Record<ReleaseAssessment['state'], string> = {
+  assessment_unavailable: 'Assessment unavailable', stale: 'Stale', confirmed_regression: 'Confirmed regression',
+  tests_incomplete: 'Tests incomplete', review_required: 'Review required',
+}
+const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : 'not recorded')
+
+export function ReleaseAssessmentPanel({ scanId }: { scanId: string }) {
+  const loaded = useLoad(() => api<ReleaseAssessment>(`/api/scans/${scanId}/assessment`), `assessment:${scanId}`)
+  // While another scan is loading, the previous assessment must not be shown as if it were the new one.
+  const result = loaded.data && loaded.data.scan_id === scanId ? loaded.data : null
+
+  return (
+    <section aria-label="Release assessment" className="assessment">
+      {loaded.loading && !result && <div className="panel bb-state" role="status"><div className="spinner bb-spinner" /><div><h3>Building the assessment from stored evidence…</h3></div></div>}
+      {loaded.error && (
+        <div className="panel bb-state bb-error" role="alert"><AlertCircle size={22} />
+          <div><h3>Assessment unavailable</h3><p className="bb-error-message">{loaded.error.message}</p><p>Nothing can be said about this scan until the assessment can be read.</p></div>
+          <button className="secondary-button" onClick={loaded.reload}><RefreshCw size={15} /> Retry</button></div>
+      )}
+      {result && <>
+        <div className="panel assessment-head">
+          <div>
+            <div className="micro-label">ASSESSMENT STATE</div>
+            <h2><Pill kind={STATE_KIND[result.state]} dot>{result.state_label}</Pill>
+              {result.states.filter(name => name !== result.state).map(name => <Pill key={name} kind="muted">{STATE_LABEL[name]}</Pill>)}</h2>
+            <p>{result.statement}</p>
+          </div>
+          <div className="assessment-actions">
+            <button className="secondary-button" onClick={loaded.reload} disabled={loaded.loading}><RefreshCw size={15} className={loaded.loading ? 'spin' : ''} /> Refresh</button>
+            <a className="secondary-button" href={`${API_BASE}/api/scans/${scanId}/assessment`} download={`shipsafe-assessment-${scanId.slice(0, 8)}.json`}><Download size={15} /> Export JSON</a>
+            <a className="secondary-button" href={`${API_BASE}/api/scans/${scanId}/assessment/report`} download><Download size={15} /> Export report</a>
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="panel-head"><div><h3>What was assessed</h3><p>Scanned {when(result.identity.scanned_at)} · assessment built {when(result.generated_at)}</p></div></div>
+          <dl className="bb-facts">
+            <div><dt>Repository</dt><dd>{result.identity.repo_name} · {result.identity.provider}{result.identity.repository_id ? <> · <code>{result.identity.repository_id}</code></> : null}{result.identity.pull_request_id != null ? <> · pull request <code>{result.identity.pull_request_id}</code></> : null}</dd></div>
+            <div><dt>Change</dt><dd><code>{result.identity.base_ref}</code> → <code>{result.identity.head_ref}</code> ({result.identity.comparison})</dd></div>
+            <div><dt>Base commit</dt><dd>{result.identity.base_commit ? <code className="bb-sha">{result.identity.base_commit}</code> : 'Not recorded'}</dd></div>
+            <div><dt>Head commit</dt><dd>{result.identity.head_commit ? <code className="bb-sha">{result.identity.head_commit}</code> : 'Not recorded'}</dd></div>
+          </dl>
+          {result.identity.stale && <p className="bb-footnote" role="note">Stale since {when(result.identity.stale_at)}: the pull request has new commits. Everything on this page describes an older change.</p>}
+        </div>
+
+        <div className="assessment-grid">
+          <div className="panel" role="region" aria-label="Static findings">
+            <div className="panel-head"><div><h3>Static findings</h3><p>{result.static.label}</p></div><Pill kind="muted">{result.static.finding_count}</Pill></div>
+            <div className="assessment-body">
+              {result.static.findings.length === 0 ? <p className="muted-small">No known pattern was flagged. That is not evidence of safety.</p>
+                : result.static.findings.map(item => <div className="ai-compare-item" key={item.id}><Severity level={item.severity} /><span><strong>{item.title}</strong><small>{item.file}{item.line != null ? `:${item.line}` : ''} · {item.category}</small></span></div>)}
+              <p className="muted-small">Heuristic risk score {result.static.risk_score}/100 · {result.static.recommendation}</p>
+            </div>
+          </div>
+
+          <div className="panel" role="region" aria-label="Imported AI reviews">
+            <div className="panel-head"><div><h3>Imported AI reviews</h3><p>{result.ai_reviews.label}</p></div><Pill kind="muted">{result.ai_reviews.count}</Pill></div>
+            <div className="assessment-body">
+              {result.ai_reviews.latest === null ? <p className="muted-small">None imported.</p> : <>
+                <p className="muted-small">Latest imported {when(result.ai_reviews.latest.imported_at)} · suggestion: {result.ai_reviews.latest.recommendation.replace(/_/g, ' ')}</p>
+                {result.ai_reviews.latest.findings.length === 0 ? <p className="muted-small">It proposed no finding.</p>
+                  : result.ai_reviews.latest.findings.map((item, index) => <div className="ai-compare-item" key={`${index}-${item.title}`}><Severity level={item.severity} /><span><strong>{item.title}</strong><small>{item.file}{item.line != null ? `:${item.line}` : ''} · {item.confidence} confidence</small></span></div>)}
+              </>}
+            </div>
+          </div>
+
+          <div className="panel" role="region" aria-label="Test evidence">
+            <div className="panel-head"><div><h3>Test evidence</h3><p>Only executed results count</p></div><Pill kind={result.tests.runs.executed ? 'muted' : 'warning'}>{result.tests.runs.executed} executed</Pill></div>
+            <div className="assessment-body">
+              <div className="settings-row"><span>Executed runs</span><strong>{result.tests.runs.executed}</strong></div>
+              <div className="settings-row"><span>Confirmed regressions</span><strong>{result.tests.runs.confirmed_regressions}</strong></div>
+              <div className="settings-row"><span>Run requests blocked</span><strong>{result.tests.runs.blocked} of {result.tests.runs.requested}</strong></div>
+              <div className="settings-row"><span>Proposed tests</span><strong>{result.tests.proposals.by_status.approved} approved · {result.tests.proposals.by_status.rejected} rejected · {result.tests.proposals.by_status.pending} pending</strong></div>
+              {result.tests.proposals.items.flatMap(item => item.decisions.map((decision, index) => (
+                <p className="muted-small" key={`${item.id}-${index}`}><code>{item.target_path}</code>: {decision.decision} by {decision.decided_by}, {when(decision.decided_at)}</p>
+              )))}
+              {result.tests.runs.executed === 0 && <p className="bb-warning">No test was executed. Nothing here is test evidence.</p>}
+            </div>
+          </div>
+        </div>
+
+        <div className="panel" role="region" aria-label="What is not known">
+          <div className="panel-head"><div><h3>What is not known</h3><p>Read this before deciding</p></div></div>
+          <ul className="assessment-unknowns">{result.unknowns.map((item, index) => <li key={index}>{item}</li>)}</ul>
+        </div>
+      </>}
+    </section>
+  )
+}

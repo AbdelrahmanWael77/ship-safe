@@ -60,6 +60,8 @@ All routes are unauthenticated and intended for loopback use only. CORS allows `
 | `GET /api/tests/runner` | 200 `{available: false, status: "execution_unavailable", runner, reason, checked_at}`. This build has no execution engine, so `available` is always false (Phase 4 task C) | |
 | `GET /api/scans/{id}/tests/proposals/{pid}/runs` | 200 `TestRun[]`, newest first | 404 |
 | `POST /api/scans/{id}/tests/proposals/{pid}/runs` | **Never 2xx in this build.** Body `{requested_by}`. Checks in order: proposal exists (404) → approved and not stale (409) → scan is of the synthetic demo repository (403) → runner. The runner refuses: **503** `{detail, code: "execution_unavailable", run}` and the request is stored as a `blocked` run with no start, end, exit code or output. Nothing is executed and no process is started | 404 · 422 missing or invalid name · 409 · 403 · 503 |
+| `GET /api/scans/{id}/assessment` | 200 `ReleaseAssessment`: stored evidence for the scan arranged by kind (static SUSPECTED, imported AI UNVERIFIED, executed tests), `state` (`assessment_unavailable` · `stale` · `confirmed_regression` · `tests_incomplete` · `review_required`, first that applies; all that apply in `states`), identity with full commits, and `unknowns`. Read-only; never states that a change is safe (Phase 5) | 404 |
+| `GET /api/scans/{id}/assessment/report` | 200 `text/markdown` attachment with the same content | 404 |
 | `GET /api/repository/status` | 200 `{repo, main_sha, branches}` for the demo repository | 500 |
 | `GET /api/bitbucket/status` | 200 `{configured, provider, workspace, repositories}`; never the credential | |
 | `GET /api/bitbucket/repositories` | 200 `BitbucketRepository[]` (approved repositories only) | Bitbucket errors, below |

@@ -49,10 +49,10 @@ describe('existing demo dashboard', () => {
     expect(await screen.findByRole('heading', { name: 'Release overview' })).toBeInTheDocument()
   })
 
-  test('all existing navigation entries are still there, in the same order', async () => {
+  test('all earlier navigation entries are still there, in the same order, with Release assessment added', async () => {
     await start({ [STATUS]: { body: statusConfigured() } })
     expect(primaryNav().getAllByRole('button').map(button => button.textContent?.replace(/\d+$/, ''))).toEqual([
-      'Overview', 'Code changes', 'Risk findings', 'Test intelligence', 'Claude Review', 'Scan history',
+      'Overview', 'Code changes', 'Risk findings', 'Test intelligence', 'Claude Review', 'Release assessment', 'Scan history',
     ])
     expect(screen.getByRole('button', { name: 'Configuration' })).toBeVisible()
   })

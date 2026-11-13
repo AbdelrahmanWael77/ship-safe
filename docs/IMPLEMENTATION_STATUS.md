@@ -5,13 +5,24 @@
 Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 
 - **Roadmap:** `prompts/PHASE-01-FOUNDATION.md` … `PHASE-05-FINAL-VALIDATION.md`; gates in `docs/ACCEPTANCE_MATRIX.md`
-- **Current phase:** 4 — isolated regression verification (`prompts/PHASE-04-REGRESSION-TESTS.md`), started 2026-11-13 by owner decision with **Run kept BLOCKED** (no verified isolated runner), and **while Phases 2 and 3 are still open**: Phase 2 task 6 (live Bitbucket smoke test) and a browser walk-through are NOT TESTED; Phase 3's real Claude Code session gate is NOT TESTED. No phase after 1 is complete or tagged.
+- **Current phase:** 5 — final validation (`prompts/PHASE-05-FINAL-VALIDATION.md`). **Everything an agent can build without the owner is built; no phase after 1 is complete, reviewed, merged or tagged.** Open, owner-only: Phase 2 live Bitbucket smoke test and browser walk-through; Phase 3 one real Claude Code review round trip; Phase 4 isolated runner (execution is **BLOCKED**), baseline/head comparison and challenge cases; Phase 5 rehearsed demo, hidden-change evaluation and human review. Exact feature status: `docs/handoffs/P5-FINAL-SESSION_HANDOFF.md`.
 - **Last updated:** 2026-11-13
+
+### Phase 5 — done 2026-11-13 as far as it can be without the owner (Windows 11, Python from `.venv`, Node 24.22.2)
+- **Task 2, evidence-based assessment:** `backend/app/assessment.py`; `GET /api/scans/{id}/assessment` (JSON) and `/assessment/report` (Markdown); "Release assessment" page (`frontend/src/ReleaseAssessmentPanel.tsx`) with both exports. States: assessment unavailable, stale, confirmed regression, tests incomplete, review required. It arranges stored evidence only, keeps static (SUSPECTED), imported AI (UNVERIFIED) and executed tests apart, lists unknowns, and never says a change is safe. With execution blocked, every commit-bound scan is "tests incomplete".
+- **Task 1, UX integration:** the new page is in the primary navigation; the other screens were connected in earlier phases. No further polish was done and nothing was viewed in a browser.
+- **Task 3, security:** `docs/SECURITY_ASSESSMENT.md`. No critical issue needing a code change was found. Classification: localhost-only, single trusted user (no authentication).
+- **Task 4, verification:** `cd backend && ..\.venv\Scripts\python -m pytest -q` → 424 passed, 1 warning (11 min 29 s); `cd frontend && npm test` → 150 passed (10 files); `npm run build` → ✓; `npm audit` → 0. Synthetic approved regression: **BLOCKED** (controls demonstrated by `test_runner.py`).
+- **Task 5, evidence:** `docs/DEMO_SCRIPT.md` (not rehearsed) and `docs/STUMP_THE_MODEL_RESULTS.md` (first prompt, interventions counted from the session, the model's errors and how they were caught; **no hidden-change evaluation was done**).
+- **Task 6, optional webhooks:** not started (core gates are not all passed).
+- **Gates:** 5 of 8 ticked in the Phase 5 prompt; 3 open (real Claude Code step, hidden-test findings, verified demo and human review).
+- **Container runner attempt:** Docker's daemon was running (29.1.3), and the owner had said to continue all phases. Building a runner image and starting a locked-down container was **refused by the agent session's permission settings**; it was not retried or worked around. Nothing was built or started. Execution stays BLOCKED.
+- **Files:** see `docs/handoffs/P5-FINAL-SESSION_HANDOFF.md`.
 
 ### Phase 4 task list (order; one task at a time)
 - A. [x] Test discovery without executing code (committed `e092f9e` on `feat/p4-test-discovery`, cut from `f0fd75c`)
 - B. [x] Proposed tests as untrusted data + explicit, recorded human approval, migration 3 (committed `f70e769`)
-- C. [x] Runner interface that fails closed: `execution_unavailable`, run requests recorded as BLOCKED, migration 4 (**uncommitted** on `feat/p4-test-discovery`). **Real execution in a verified isolated container is NOT built** and needs the owner (Docker running, explicit go-ahead) — next, owner-gated
+- C. [x] Runner interface that fails closed: `execution_unavailable`, run requests recorded as BLOCKED, migration 4 (committed `8dcd34a`). **Real execution in a verified isolated container is NOT built**; it needs the owner's explicit approval and a session that is permitted to start containers
 - D. [ ] Baseline versus changed-commit comparison
 - E. [ ] Synthetic challenge cases (LedgerLite)
 - F. [ ] UI and persistence for proposals, approvals, logs, timeline

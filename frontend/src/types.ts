@@ -280,3 +280,30 @@ export interface TestRun {
   output: string | null;
   executed: boolean;
 }
+
+// -- Phase 5: evidence-based release assessment (arranges stored evidence; never says "safe")
+export type AssessmentState = 'assessment_unavailable' | 'stale' | 'confirmed_regression' | 'tests_incomplete' | 'review_required';
+interface AssessedFinding { id?: string | null; severity: string; category: string; title: string; file: string; line: number | null; confidence?: string }
+export interface ReleaseAssessment {
+  scan_id: string;
+  generated_at: string;
+  state: AssessmentState;
+  state_label: string;
+  states: AssessmentState[];
+  statement: string;
+  identity: {
+    repo_name: string; provider: string; repository_id: string | null; pull_request_id: string | null;
+    base_ref: string; head_ref: string; base_commit: string | null; head_commit: string | null;
+    comparison: string; scanned_at: string; stale: boolean; stale_at: string | null;
+  };
+  static: { label: string; finding_count: number; by_severity: Record<string, number>; risk_score: number; recommendation: string; files_changed: number; findings: (AssessedFinding & { id: string })[] };
+  ai_reviews: { label: string; count: number; latest: null | { id: string; imported_at: string; schema_version: string; recommendation: string; finding_count: number; findings: AssessedFinding[] } };
+  tests: {
+    label: string;
+    repository_test_status: string;
+    proposals: { count: number; by_status: { pending: number; approved: number; rejected: number };
+      items: { id: string; target_path: string; status: string; finding_ref: string | null; origin: string; decisions: { decision: string; decided_by: string; decided_at: string; note: string | null }[] }[] };
+    runs: { requested: number; blocked: number; executed: number; confirmed_regressions: number; items: Partial<TestRun>[] };
+  };
+  unknowns: string[];
+}

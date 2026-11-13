@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, ValidationError
 from .ai_handoff import MAX_IMPORT_BYTES, parse_review, review_content_digest, context_digest, handoff_zip, saved_review, validate_review_binding
 from .config import load_settings
 from .db import BINDING_COLUMNS, binding, insert_scan, migrate, pull_request_scans, scanned_pull_requests, session, sync_stale
+from .assessment import assess, render_markdown
 from .discovery import discover_tests
 from .runner import EXECUTION_UNAVAILABLE, Runner, UnavailableRunner, blocked_reason, record_blocked_run, runs_of
 from .proposals import (
@@ -517,6 +518,30 @@ def create_app(
                 base_commit=proposal["base_commit"], head_commit=proposal["head_commit"])
             run = next(item for item in runs_of(conn, proposal_id) if item["id"] == run_id)
         return JSONResponse(status_code=503, content={"detail": reason, "code": EXECUTION_UNAVAILABLE, "run": run})
+
+    # -- Phase 5: evidence-based release assessment (read-only; adds nothing to the evidence) --
+
+    def build_assessment(scan_id: str) -> dict:
+        report, source = review_inputs(scan_id)
+        reviews = list_ai_reviews(scan_id)
+        proposals = list_test_proposals(scan_id)
+        with connection() as conn:
+            for proposal in proposals:
+                proposal["runs"] = runs_of(conn, proposal["id"])
+        return assess(report, source, reviews, proposals)
+
+    @app.get("/api/scans/{scan_id}/assessment")
+    def release_assessment(scan_id: str):
+        return build_assessment(scan_id)
+
+    @app.get("/api/scans/{scan_id}/assessment/report")
+    def release_assessment_report(scan_id: str):
+        """The same assessment as a readable Markdown file."""
+        return Response(
+            content=render_markdown(build_assessment(scan_id)), media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="shipsafe-assessment-{scan_id[:8]}.md"',
+                     "Cache-Control": "no-store"},
+        )
 
     @app.get("/api/scans/{scan_id}/ai/reviews/latest")
     def latest_ai_review(scan_id: str):

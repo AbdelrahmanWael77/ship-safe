@@ -155,7 +155,7 @@ export function PullRequestsPage({ status, selection, navigate }: {
                         {item.latest_scan ? (
                           <span className="bb-latest">
                             <StaleBadge binding={item.latest_scan.binding} />
-                            <small>{item.latest_scan.summary.finding_count} {item.latest_scan.summary.finding_count === 1 ? 'finding' : 'findings'} · risk {item.latest_scan.summary.risk_score}/100</small>
+                            <small>{item.latest_scan.summary.finding_count} static {item.latest_scan.summary.finding_count === 1 ? 'finding' : 'findings'} · static risk {item.latest_scan.summary.risk_score}/100</small>
                           </span>
                         ) : <span className="bb-muted">—</span>}
                       </td>

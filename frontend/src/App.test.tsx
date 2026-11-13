@@ -36,7 +36,7 @@ describe('existing demo dashboard', () => {
     expect(screen.getByText('LOCAL DEMO')).toBeVisible()
     expect(screen.getByText(report.base_sha)).toBeVisible()
     expect(screen.getByText(report.head_sha)).toBeVisible()
-    expect(screen.getByText('Requires engineering review')).toBeVisible()  // finding_count > 0
+    expect(screen.getByRole('status', { name: 'At a glance' })).toHaveTextContent(`${report.findings.length} possible problems found`)  // finding_count > 0
     expect(screen.getByText(report.summary.recommendation)).toBeVisible()
     expect(api.calls).toEqual(expect.arrayContaining(['/api/demo', '/api/scans?limit=100', `/api/scans/${report.id}`]))
   })
@@ -680,6 +680,32 @@ describe('AI review results on Risk findings and Test intelligence', () => {
     const line = (await screen.findByText(/Not included in this score/)).closest('p')
     expect(line).toHaveTextContent('AI review (Claude import, unverified): suggests Block release · 1 critical. Not included in this score.')
     expect(document.querySelector('.progress-number')).toHaveTextContent(String(report.summary.risk_score))
+  })
+
+  test('Overview of a change the static rules cannot read and no AI review: "Not checked yet", N/A instead of 0', async () => {
+    await start({ [`/api/scans/${report.id}`]: { body: dartReport() } })
+    const glance = await screen.findByRole('status', { name: 'At a glance' })
+    expect(glance).toHaveTextContent('Not checked yet')
+    expect(glance).toHaveTextContent(/(was|were) not checked\. Run an AI review/)
+    const card = (title: string) => screen.getByText(title, { selector: '.stat-label' }).closest('.stat-card') as HTMLElement
+    expect(within(card('Static findings')).getByText('N/A')).toBeVisible()
+    expect(within(card('Affected importers')).getByText('N/A')).toBeVisible()
+    expect(within(card('AI findings')).getByText('—')).toBeVisible()
+    expect(screen.getByLabelText('Static score not applicable')).toHaveTextContent('N/A')
+    await userEvent.click(within(glance).getByRole('button', { name: /Run an AI review/ }))
+    expect(await screen.findByRole('region', { name: 'Review with an AI model' })).toBeVisible()
+  })
+
+  test('Overview with an AI review: the problems are counted at a glance, in a card and in the risk list', async () => {
+    await start({ [`/api/scans/${report.id}`]: { body: dartReport() }, [reviews]: { body: [aiReview()] } })
+    const glance = await screen.findByRole('status', { name: 'At a glance' })
+    expect(glance).toHaveTextContent('1 possible problem found')
+    expect(glance).toHaveTextContent('1 from the AI review (1 critical, unverified; suggests Block release)')
+    const ai = screen.getByText('AI findings', { selector: '.stat-label' }).closest('.stat-card') as HTMLElement
+    expect(within(ai).getByText('1')).toBeVisible()
+    expect(within(ai).getByText(/1 critical · unverified/)).toBeVisible()
+    expect(screen.getByRole('button', { name: /TLS errors accepted .* AI review · unverified/ })).toBeVisible()
+    expect(primaryNav().getByTitle('0 static · 1 AI (unverified)')).toHaveTextContent('1')
   })
 
   test('Overview calls an imported review a manual Claude Code import', async () => {

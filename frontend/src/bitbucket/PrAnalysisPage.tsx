@@ -260,7 +260,7 @@ export function PrAnalysisPage({ status, selection, navigate, onScanned, onOpenR
           ) : (
             <div className="history-table-wrap">
               <table className="history-table bb-table">
-                <thead><tr><th>Scanned</th><th>Commits (base → head)</th><th>Findings</th><th>Risk</th><th>State</th><th><span className="visually-hidden">Actions</span></th></tr></thead>
+                <thead><tr><th>Scanned</th><th>Commits (base → head)</th><th>Static findings</th><th>Static risk</th><th>State</th><th><span className="visually-hidden">Actions</span></th></tr></thead>
                 <tbody>
                   {pull.scans.map(item => (
                     <tr key={item.id} className={report?.id === item.id ? 'bb-row-open' : ''}>
@@ -289,7 +289,7 @@ export function PrAnalysisPage({ status, selection, navigate, onScanned, onOpenR
             <div className="panel-head">
               <div>
                 <h3>Scan report {report.mock && <Pill kind="warning">MOCK DATA</Pill>} <StaleBadge binding={binding} /></h3>
-                <p>Scanned {when(report.created_at)} · {report.summary.files_changed} {report.summary.files_changed === 1 ? 'file' : 'files'} · +{report.summary.lines_added} −{report.summary.lines_removed} · {report.summary.finding_count} {report.summary.finding_count === 1 ? 'finding' : 'findings'} · risk {report.summary.risk_score}/100 · {report.summary.recommendation}</p>
+                <p>Scanned {when(report.created_at)} · {report.summary.files_changed} {report.summary.files_changed === 1 ? 'file' : 'files'} · +{report.summary.lines_added} −{report.summary.lines_removed} · {report.summary.finding_count} static {report.summary.finding_count === 1 ? 'finding' : 'findings'} · static risk {report.summary.risk_score}/100 · {report.summary.recommendation}</p>
               </div>
               {!report.mock && (
                 <button className="secondary-button" onClick={() => onOpenReport(report.id)}>Open in dashboard <ArrowRight size={15} /></button>

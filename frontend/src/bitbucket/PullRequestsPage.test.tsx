@@ -43,7 +43,7 @@ describe('pull request list', () => {
     expect(scanned.getByText('Dev One')).toBeVisible()
     expect(scanned.getByText('feature/change-7')).toBeVisible()
     expect(scanned.getByText('1 scan')).toBeVisible()
-    expect(scanned.getByText(/1 finding · risk 45\/100/)).toBeVisible()
+    expect(scanned.getByText(/1 static finding · static risk 45\/100/)).toBeVisible()
     expect(rows[0].querySelector('[data-stale]')).toHaveAttribute('data-stale', 'stale')
 
     expect(within(rows[1]).getByText('Not scanned')).toBeVisible()

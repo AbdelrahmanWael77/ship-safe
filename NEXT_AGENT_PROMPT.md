@@ -18,12 +18,12 @@ Read `AGENTS.md`, `CLAUDE.md`, and the checkpoint at the top of `docs/IMPLEMENTA
 - Earlier: provider (task 1, `08b3b1b`), settings (task 2, `ebc9068`), migration 2 (task 3, `82d14ed`).
 
 **Tests last run (2026-11-12, Linux cloud container, Python 3.13.18, Node from the container image):**
-- `cd backend && python -m pytest -q tests/test_bitbucket_api.py` → 41 passed
-- `cd backend && python -m pytest -q` → 229 passed, 1 warning
+- `cd backend && python -m pytest -q tests/test_bitbucket_api.py` → 45 passed
+- `cd backend && python -m pytest -q` → 236 passed, 1 warning (2026-11-13, after the `truncated` flag)
 - 2026-11-13, `feat/p2-frontend-screens` (task 5, milestone 1 — toolchain only): `cd frontend && npm ci && npm test && npm run build` → 2 tests passed, ✓ built; `npm audit` → 0. Frontend needs Node 22.12+ or 24+ (Vite 6.4.6, Vitest 5.1.0).
 - Not re-run on Windows since `08b3b1b`. On Windows use `.venv\Scripts\python`.
 
-**Branch / commit / uncommitted edits:** GitHub has no `main`; the default branch is `feat/p1-foundation` (`98c9d92`, contains task 1). On GitHub, stacked on `08b3b1b`: `feat/p2-bitbucket-settings` (`ebc9068`, task 2) → `feat/p2-migration-2` (`82d14ed`, task 3) → `feat/p2-bitbucket-api` (`790b293`, task 4). Task 5 is in progress on `feat/p2-frontend-screens` (cut from `790b293`, local only, not pushed): milestone 1, the frontend toolchain and test setup, is committed; the remaining milestones are listed in the checkpoint. Commit at milestones; push only if the owner says so; never commit directly to `feat/p1-foundation`.
+**Branch / commit / uncommitted edits:** GitHub has no `main`; the default branch is `feat/p1-foundation` (`98c9d92`, contains task 1). On GitHub, stacked on `08b3b1b`: `feat/p2-bitbucket-settings` (`ebc9068`, task 2) → `feat/p2-migration-2` (`82d14ed`, task 3) → `feat/p2-bitbucket-api` (`790b293`, task 4). Task 5 is in progress on `feat/p2-frontend-screens` (cut from `790b293`, local only, not pushed): milestone 1 (frontend toolchain and test setup, `1851b6f`) and milestone 2 (`truncated: bool` on the pull request list response) are committed; the remaining milestones are listed in the checkpoint. Windows verification of the toolchain milestone is still outstanding (see the checkpoint). Commit at milestones; push only if the owner says so; never commit directly to `feat/p1-foundation`.
 
 **Known blockers:** live Bitbucket is NOT TESTED (no credentials; never ask for a token in chat), so every payload shape is unconfirmed until task 6. The owner accepted the response shapes as the initial contract, subject to frontend integration validation; record any gap you find instead of silently changing the backend. The repository has no frontend test harness, while the Phase 2 prompt asks for frontend tests: raise this with the owner before choosing one. A database opened by this code is version 2; older branches refuse it.
 

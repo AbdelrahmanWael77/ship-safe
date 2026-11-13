@@ -133,3 +133,11 @@ Decision: Upgrade `vite` from 5.4 to `^6.4.6` (one major) and add `vitest ^5.1.0
 Alternatives considered: Vitest 3.2.7 on Vite 5 (rejected: critical advisories, unmaintained). Vitest 4.1.12 (supports Node 20, but npm 10.9.9 crashes while resolving it from scratch, so the lock file would have to be made with npm 11). Vite 8 with plugin-react 6 (installed only with `--legacy-peer-deps`). Jest with ts-jest (477 packages and 22 advisories against about 200 and 0; no support for `import.meta.env` without a workaround).
 Security / product impact: `npm audit` goes from 2 advisories (1 moderate, 1 high) to 0. Node 20 is no longer supported for the frontend. The bundle grows from 198.79 kB to 200.11 kB. The demo behaves the same in a scripted browser run on both versions. Not verified on Windows or with `vite preview`.
 Related ticket / commit: P2 task 5, milestone 1, `feat/p2-frontend-screens`
+
+## 2026-11-13 — `truncated` on the pull request list
+Decision owner: Mohamed Elsayed (approved 2026-11-12, confirmed 2026-11-13)
+Problem / tradeoff: The pull request list returns at most 200 items and gave no sign when Bitbucket had more, so the UI could present a cut list as complete.
+Decision: `GET /api/bitbucket/repositories/{slug}/pull-requests` gains `truncated: bool`, true only when items were actually left out. No other field or behaviour changed; `BitbucketCloudProvider.list_pull_requests` keeps its return type and a new `list_pull_requests_page` returns the list with the flag.
+Alternatives considered: Paging parameters (larger contract and UI change; not needed for the pilot); returning a total count (Bitbucket does not always send one).
+Security / product impact: None on data. When true, the pull requests beyond the first 200 cannot be reached through ShipSafe.
+Related ticket / commit: P2 task 5, milestone 2, `feat/p2-frontend-screens`

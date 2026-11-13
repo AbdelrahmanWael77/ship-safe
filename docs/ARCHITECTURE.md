@@ -55,7 +55,7 @@ All routes are unauthenticated and intended for loopback use only. CORS allows `
 | `GET /api/repository/status` | 200 `{repo, main_sha, branches}` for the demo repository | 500 |
 | `GET /api/bitbucket/status` | 200 `{configured, provider, workspace, repositories}`; never the credential | |
 | `GET /api/bitbucket/repositories` | 200 `BitbucketRepository[]` (approved repositories only) | Bitbucket errors, below |
-| `GET /api/bitbucket/repositories/{slug}/pull-requests?state=open\|merged\|declined` | 200 `{repository, state, pull_requests: PullRequestListItem[]}` | 422 bad state · Bitbucket errors |
+| `GET /api/bitbucket/repositories/{slug}/pull-requests?state=open\|merged\|declined` | 200 `{repository, state, pull_requests: PullRequestListItem[], truncated}` | 422 bad state · Bitbucket errors |
 | `GET /api/bitbucket/repositories/{slug}/pull-requests/{id}` | 200 `PullRequestDetail` | Bitbucket errors |
 | `POST /api/bitbucket/repositories/{slug}/pull-requests/{id}/scans` | 201 `Report` with `binding` (persisted) | 409 `head_commit_unavailable`, `base_commit_unavailable`, `head_changed` · 422 body · Bitbucket errors |
 
@@ -96,7 +96,7 @@ All routes are read-only towards Bitbucket (GET requests to `api.bitbucket.org` 
 - `BitbucketStatus`: `{configured: bool, provider: "bitbucket-cloud"?, workspace: string?, repositories: string[]}`. Never contains the credential. Always 200, also when not configured.
 - `BitbucketRepository`: `{id: "workspace/slug", slug, name, url, default_branch?}`. `url` is built by ShipSafe from the validated slug.
 - `PullRequest` (the `PullRequestRef` fields): `{provider, repository_id, id: string, title, state: "open"|"merged"|"declined", source_ref, target_ref, source_sha?, target_sha?, author?, url, updated_at?}`. `url` is built by ShipSafe, never copied from Bitbucket's payload. SHAs are full 40-character lowercase hex or null.
-- `PullRequestList` (`GET …/pull-requests?state=open|merged|declined`, default `open`, at most 200 items in Bitbucket's order): `{repository: BitbucketRepository, state, pull_requests: PullRequestListItem[]}`.
+- `PullRequestList` (`GET …/pull-requests?state=open|merged|declined`, default `open`, at most 200 items in Bitbucket's order): `{repository: BitbucketRepository, state, pull_requests: PullRequestListItem[], truncated: bool}`. `truncated` is true only when Bitbucket has more pull requests in that state than the list returns (more than `MAX_PULL_REQUESTS = 200`); a list of exactly 200 with nothing after it is `false`. There is no paging parameter: when `truncated` is true the remaining pull requests cannot be listed through ShipSafe, so the UI should say that only the first 200 are shown. Added 2026-11-13; older clients that ignore the key are unaffected.
 - `PullRequestListItem`: `PullRequest` + `{scan_count: int, latest_scan: PullRequestScan?, stale_checked: bool}`.
 - `PullRequestDetail`: `PullRequest` + `{repository, scannable: bool, not_scannable_code?, not_scannable_reason?, stale_checked: bool, scans: PullRequestScan[]}` (newest first, at most 25).
 - `PullRequestScan`: `{id, created_at, summary, binding}`. `summary` is the report's summary.
@@ -187,7 +187,7 @@ Settings are three optional `SHIPSAFE_*` environment variables, four optional `S
 
 ## Tests
 
-Backend only, under `backend/tests` (229 tests on 2026-11-12). Each test builds its own demo repository and database in a pytest temp directory; none touches `backend/demo-repo` or the real `scans.db`. Every `TestClient` is created with `base_url="http://127.0.0.1"` because the API refuses other `Host` headers. No test contacts Bitbucket: Bitbucket tests use `httpx.MockTransport`.
+Backend only, under `backend/tests` (236 tests on 2026-11-13). Each test builds its own demo repository and database in a pytest temp directory; none touches `backend/demo-repo` or the real `scans.db`. Every `TestClient` is created with `base_url="http://127.0.0.1"` because the API refuses other `Host` headers. No test contacts Bitbucket: Bitbucket tests use `httpx.MockTransport`.
 
 | File | Tests | Covers |
 |---|---|---|
@@ -195,10 +195,10 @@ Backend only, under `backend/tests` (229 tests on 2026-11-12). Each test builds 
 | `test_phase1_regressions.py` | 32 | The Phase 1 defect fixes (textconv, encoding, file names, parser exhaustion, error codes, interrupted demo seed), real commits and changed lines, docs-only, restart persistence, the scan leaves the repository unmodified |
 | `test_foundation.py` | 15 | Provider protocol conformance, orchestration over an in-memory provider, report shape pinned to the example, settings and allowlist rules, CORS, migration runner |
 | `test_phase1_remediation.py` | 30 | The independent-review fixes: Host-header refusal, demo-dir drive root, literal pathspecs, repository-config commands never run during a scan, redirecting `.git` files, seeder safety, truncation reporting |
-| `test_bitbucket_provider.py` | 38 | P2 task 1: Bitbucket Cloud provider against mocked HTTP (allowlist, pagination, pull requests, comparisons, auth, retries, caps) |
+| `test_bitbucket_provider.py` | 41 | P2 task 1: Bitbucket Cloud provider against mocked HTTP (allowlist, pagination, pull requests, comparisons, auth, retries, caps) |
 | `test_bitbucket_settings.py` | 32 | P2 task 2: `SHIPSAFE_BITBUCKET_*` loading, partial configuration refused, token never in `repr`, logs, or responses |
 | `test_migration_2.py` | 17 | P2 task 3: schema version 2, row preservation, rollback, `insert_scan`, `sync_stale` |
-| `test_bitbucket_api.py` | 41 | P2 task 4: Bitbucket routes end to end over mocked HTTP, merge-base comparison, stale marking and `stale_checked`, error mapping, import-analysis bound, report-shape guard, example-file drift guard |
+| `test_bitbucket_api.py` | 45 | P2 task 4: Bitbucket routes end to end over mocked HTTP, merge-base comparison, stale marking and `stale_checked`, error mapping, import-analysis bound, report-shape guard, example-file drift guard |
 
 Frontend: `frontend/src/App.test.tsx` (2 tests, `npm test`) is a smoke test of the existing demo dashboard with `fetch` stubbed; it uses `docs/example-scan-report.json` as its fixture. There is no lint step. The dashboard has also been exercised in headless Chrome by throwaway scripts (recorded in the session handoff: all six demo branches, export and ZIP per scan; re-run on 2026-11-13 against Vite 5 and Vite 6 with identical results); those scripts are not part of the repository.
 

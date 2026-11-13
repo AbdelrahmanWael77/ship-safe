@@ -456,3 +456,34 @@ def test_scan_orchestration_runs_against_bitbucket_and_only_issues_get_requests(
     assert {request.method for request in fake.requests} == {"GET"}
     assert {request.url.host for request in fake.requests} == {"api.bitbucket.org"}
     assert all(TOKEN not in str(request.url) for request in fake.requests)
+
+
+# -- pull request list: truncation -------------------------------------------
+
+def test_pull_request_list_reports_truncation_only_when_items_were_left_out(monkeypatch):
+    monkeypatch.setattr(bitbucket, "MAX_PULL_REQUESTS", 2)
+    path = f"{REPO}/pullrequests"
+
+    def listed(payload):
+        return FakeBitbucket({path: js(payload)}).provider().list_pull_requests_page(LEDGER)
+
+    below, cut = listed({"values": [pull_request(1)], "size": 1})
+    assert ([pr.id for pr in below], cut) == (["1"], False)
+    exact, cut = listed({"values": [pull_request(1), pull_request(2)], "size": 2})
+    assert ([pr.id for pr in exact], cut) == (["1", "2"], False)        # exactly at the limit: complete
+    over, cut = listed({"values": [pull_request(1), pull_request(2), pull_request(3)], "size": 3})
+    assert ([pr.id for pr in over], cut) == (["1", "2"], True)          # one more than the limit
+    # Bitbucket omits "size" on some listings; a further page is then the only sign.
+    more, cut = listed({"values": [pull_request(1), pull_request(2)], "next": f"{API}{path}?page=2"})
+    assert ([pr.id for pr in more], cut) == (["1", "2"], True)
+
+
+def test_pull_request_list_is_unchanged_and_agrees_with_the_paged_form(monkeypatch):
+    monkeypatch.setattr(bitbucket, "MAX_PULL_REQUESTS", 2)
+    fake = FakeBitbucket({f"{REPO}/pullrequests": js({"values": [pull_request(1), pull_request(2), pull_request(3)]})})
+    plain = fake.provider().list_pull_requests(LEDGER)
+    assert isinstance(plain, list) and plain == fake.provider().list_pull_requests_page(LEDGER)[0]
+
+
+def test_default_pull_request_limit_is_200():
+    assert bitbucket.MAX_PULL_REQUESTS == 200

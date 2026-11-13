@@ -493,3 +493,40 @@ def test_published_example_responses_match_the_current_contract(make_client):
     assert keys(client.get("/api/bitbucket/status").json()) == keys(example["GET /api/bitbucket/status"])
     assert keys(client.get(ROUTES).json()[0]) == keys(example["GET /api/bitbucket/repositories"][0])
     assert keys(client.get("/api/scans").json()[0]) == keys(example["GET /api/scans (history item, after the head moved, before any check)"])
+
+
+# -- pull request list: truncated flag ---------------------------------------
+
+def test_pull_request_list_is_not_truncated_when_everything_fits(make_client):
+    body = make_client(bitbucket()).get(f"{ROUTES}/ledger/pull-requests").json()
+    assert body["truncated"] is False
+    assert set(body) == {"repository", "state", "pull_requests", "truncated"}  # existing fields are still there
+    assert [item["id"] for item in body["pull_requests"]] == ["7", "8"]
+
+
+def test_pull_request_list_is_not_truncated_at_exactly_the_limit(make_client, monkeypatch):
+    from app.providers import bitbucket as provider_module
+    monkeypatch.setattr(provider_module, "MAX_PULL_REQUESTS", 2)
+    body = make_client(bitbucket()).get(f"{ROUTES}/ledger/pull-requests").json()
+    assert body["truncated"] is False and len(body["pull_requests"]) == 2
+
+
+def test_pull_request_list_is_truncated_only_when_the_limit_leaves_items_out(make_client, monkeypatch):
+    from app.providers import bitbucket as provider_module
+    monkeypatch.setattr(provider_module, "MAX_PULL_REQUESTS", 2)
+    three = js({"values": [pull_request(7), pull_request(8), pull_request(9)], "size": 3})
+    body = make_client(bitbucket(**{f"{REPO}/pullrequests": three})).get(f"{ROUTES}/ledger/pull-requests").json()
+    assert body["truncated"] is True
+    assert [item["id"] for item in body["pull_requests"]] == ["7", "8"]  # the first 200 in Bitbucket's order, here 2
+    # Every item keeps the fields it had before the flag existed.
+    assert {"id", "title", "state", "source_ref", "target_ref", "scan_count", "latest_scan", "stale_checked"} <= set(body["pull_requests"][0])
+
+
+def test_pull_request_list_follows_pages_and_reports_a_complete_result(make_client):
+    path = f"{REPO}/pullrequests"
+    first = js({"values": [pull_request(7)], "size": 2, "next": f"https://api.bitbucket.org/2.0{path}?page=2"})
+    fake = bitbucket()
+    pages = iter([first, js({"values": [pull_request(8)], "size": 2})])
+    fake.routes[path] = lambda request: next(pages)
+    body = make_client(fake).get(f"{ROUTES}/ledger/pull-requests").json()
+    assert ([item["id"] for item in body["pull_requests"]], body["truncated"]) == (["7", "8"], False)

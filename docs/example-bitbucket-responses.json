@@ -61,7 +61,8 @@
         "latest_scan": null,
         "stale_checked": false
       }
-    ]
+    ],
+    "truncated": false
   },
   "POST /api/bitbucket/repositories/ledger/pull-requests/7/scans (body {head_commit}) -> 201, report keys + binding": {
     "report_keys": [
@@ -204,7 +205,8 @@
         "latest_scan": null,
         "stale_checked": false
       }
-    ]
+    ],
+    "truncated": false
   },
   "GET /api/bitbucket/repositories/ledger/pull-requests/7 (after the head moved)": {
     "provider": "bitbucket-cloud",

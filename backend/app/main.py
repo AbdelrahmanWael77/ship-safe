@@ -341,7 +341,7 @@ def create_app(
         provider = require_bitbucket()
         with bitbucket_errors():
             repository = provider.get_repository(f"{provider.workspace}/{slug}")
-            listed = provider.list_pull_requests(repository, state)
+            listed, truncated = provider.list_pull_requests_page(repository, state)
             with connection() as conn:
                 counts = scanned_pull_requests(conn, provider=provider.name, repository_id=repository.id)
             # The list payload carries abbreviated hashes only. Pull requests
@@ -365,7 +365,9 @@ def create_app(
                     **asdict(pull_request), "scan_count": counts.get(pull_request.id, 0),
                     "latest_scan": latest[0] if latest else None, "stale_checked": checked,
                 })
-            return {"repository": repository_json(repository), "state": state, "pull_requests": items}
+            # "truncated": Bitbucket has more pull requests in this state than the list returns.
+            return {"repository": repository_json(repository), "state": state, "pull_requests": items,
+                    "truncated": truncated}
 
     @app.get("/api/bitbucket/repositories/{slug}/pull-requests/{pull_request_id}")
     def bitbucket_pull_request(slug: str, pull_request_id: str):

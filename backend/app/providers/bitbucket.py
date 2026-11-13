@@ -336,12 +336,22 @@ class BitbucketCloudProvider:
         ``source_sha``/``target_sha`` are None here: the list payload carries
         abbreviated hashes only. Use :meth:`get_pull_request` to bind a scan.
         """
+        return self.list_pull_requests_page(repository, state)[0]
+
+    def list_pull_requests_page(self, repository: RepositoryRef, state: str = "open") -> tuple[list[PullRequestRef], bool]:
+        """:meth:`list_pull_requests` plus whether the list was cut.
+
+        The flag is True only when pull requests were actually left out:
+        Bitbucket has more than ``MAX_PULL_REQUESTS`` in this state, or the
+        page limit stopped the walk early. A list of exactly
+        ``MAX_PULL_REQUESTS`` with nothing after it is complete.
+        """
         if state not in _PR_STATES:
             raise ScanError(f"Unknown pull request state: {state!r}")
-        items, _ = self._collect(
+        items, total = self._collect(
             f"{self._api(repository)}/pullrequests", {"state": _PR_STATES[state], "pagelen": 50}, MAX_PULL_REQUESTS,
         )
-        return [self._pull_request(repository, item) for item in items]
+        return [self._pull_request(repository, item) for item in items], total > len(items)
 
     def get_pull_request(self, repository: RepositoryRef, pull_request_id: str) -> PullRequestRef:
         """One pull request with full 40-character SHAs for both sides.

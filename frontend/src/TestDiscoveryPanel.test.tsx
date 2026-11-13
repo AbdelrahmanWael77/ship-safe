@@ -1,7 +1,7 @@
 // Phase 4 task A panel. `fetch` is stubbed; the canned answers have the shape
 // the API returns (backend/tests/test_discovery.py pins it).
 import { describe, expect, test } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from './App'
 import { TestDiscoveryPanel } from './TestDiscoveryPanel'
@@ -38,7 +38,7 @@ describe('test discovery panel', () => {
     expect(within(rows[0]).getByText('its file imports app/auth.py')).toBeVisible()
     expect(within(rows[0]).getByText('mentions changed function check() of app/auth.py')).toBeVisible()
     expect(within(rows[0]).getByText('2 static')).toBeVisible()
-    expect(within(rows[0]).getByText('1 imported AI (unverified)')).toBeVisible()
+    expect(within(rows[0]).getByText('1 AI (unverified)')).toBeVisible()
     expect(within(rows[1]).getByText(/changed in this scan/)).toBeVisible()
     expect(within(rows[1]).getByText('None')).toBeVisible()
     expect(screen.getAllByText('Suggested · not run')).toHaveLength(2)
@@ -61,7 +61,7 @@ describe('test discovery panel', () => {
   test('no candidate is presented as a gap, not as safety', async () => {
     open(discovery({ candidates: [], candidate_count: 0, tests_found: 0, test_files_found: 0, coverage_gaps: [] }))
     expect(await screen.findByRole('heading', { name: 'No existing test was matched to this change' })).toBeVisible()
-    expect(screen.getByText(/No pytest test was found at this commit\./)).toBeVisible()
+    expect(screen.getByText(/No test file was found at this commit/)).toBeVisible()
     expect(screen.getByText(/not a sign of safety/)).toBeVisible()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
@@ -71,7 +71,7 @@ describe('test discovery panel', () => {
     const note = await screen.findByRole('note')
     expect(note).toHaveTextContent('Incomplete discovery.')
     expect(note).toHaveTextContent('3 test files were not read (limit reached).')
-    expect(note).toHaveTextContent('Could not be parsed: tests/test_broken.py.')
+    expect(note).toHaveTextContent('Could not be read or parsed: tests/test_broken.py.')
     expect(note).toHaveTextContent('Only the first 2 candidates are listed.')
   })
 
@@ -95,6 +95,19 @@ describe('test discovery panel', () => {
     open(discovery({ scan_id: 'some-other-scan' }))
     await new Promise(resolve => setTimeout(resolve, 50))
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
+  })
+})
+
+describe('test discovery panel: one discovery per scan', () => {
+  test('opening the panel again reuses the answer; Refresh asks the API again', async () => {
+    const api = open(discovery())
+    await screen.findByText(/2 test files/)
+    cleanup()
+    render(<TestDiscoveryPanel scanId={SCAN} />)
+    await screen.findByText(/2 test files/)
+    expect(api.count(URL)).toBe(1)
+    await userEvent.click(screen.getByRole('button', { name: /Refresh/ }))
+    await waitFor(() => expect(api.count(URL)).toBe(2))
   })
 })
 

@@ -89,6 +89,19 @@ describe('pull request', () => {
   })
 })
 
+describe('already scanned', () => {
+  test('a head commit that already has a scan says so before scanning again', async () => {
+    open({ [DETAIL]: { body: detailAfterScan() } })
+    expect(await screen.findByRole('note', { name: 'Already scanned' })).toHaveTextContent(/Already scanned at this head commit .* Scanning again gives the same static result/)
+  })
+
+  test('a pull request whose head has no scan shows no such note', async () => {
+    open({ [DETAIL]: { body: unscanned() } })
+    await screen.findByRole('button', { name: /Scan this pull request/ })
+    expect(screen.queryByRole('note', { name: 'Already scanned' })).not.toBeInTheDocument()
+  })
+})
+
 describe('scanning', () => {
   test('sends the head commit on screen, then shows bound commits, findings and the diff', async () => {
     const report = pullRequestScanReport()

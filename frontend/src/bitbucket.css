@@ -191,3 +191,4 @@
 
 /* Claude Review: clipboard copy failure next to the CLI hint */
 .copy-failed{display:block;margin-top:6px;font-size:11px;color:#fbc579}
+.readiness-ai{max-width:295px;font-size:10.5px;line-height:1.6;color:#fbc579;margin:10px auto 0;text-align:center}

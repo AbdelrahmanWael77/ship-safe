@@ -48,6 +48,8 @@ def report(*files, findings=()):
     ("tests/test_auth.py", True), ("app/auth_test.py", True), ("test_x.py", True),
     ("tests/conftest.py", False), ("app/testing.py", False), ("tests/test_auth.txt", False),
     ("app/contest.py", False), ("tests/helpers.py", False),
+    ("test/payment_status_test.dart", True), ("test/widget/app_button_test.dart", True),
+    ("lib/payment_status.dart", False), ("test/helpers.dart", False), ("test/test_utils.dart", False),
 ])
 def test_test_files_follow_pytest_default_names(path, expected):
     assert is_test_file(path) is expected
@@ -119,7 +121,7 @@ def test_coverage_gaps_list_untested_modules_and_non_python_files_with_their_fin
     assert found["coverage_gaps"] == [
         {"changed_file": "app/pricing.py", "reason": "No discovered test file imports this module.",
          "static_finding_ids": ["f-price"], "ai_finding_ids": ["F1"]},
-        {"changed_file": "README.md", "reason": "Not a Python module; imports cannot be traced to it.",
+        {"changed_file": "README.md", "reason": "Not a Python or Dart file; imports cannot be traced to it.",
          "static_finding_ids": [], "ai_finding_ids": []},
     ]  # the changed test file itself is not a gap
     candidate = found["candidates"][0]
@@ -225,9 +227,79 @@ def test_demo_docs_only_change_has_no_candidates_and_one_honest_gap(demo):
     scanned = scan(demo, "feature/docs-only")
     found = demo.get(f"/api/scans/{scanned['id']}/tests/discovery").json()
     assert found["candidates"] == [] and found["candidate_count"] == 0
-    assert [gap["reason"] for gap in found["coverage_gaps"]] == ["Not a Python module; imports cannot be traced to it."] * len(scanned["files"])
+    assert [gap["reason"] for gap in found["coverage_gaps"]] == ["Not a Python or Dart file; imports cannot be traced to it."] * len(scanned["files"])
     assert all(gap["static_finding_ids"] == [] for gap in found["coverage_gaps"])
 
 
 def test_unknown_scan_is_404(demo):
     assert demo.get("/api/scans/12345678-1111-2222-3333-444444444444/tests/discovery").status_code == 404
+
+
+# -- Dart / Flutter -----------------------------------------------------------
+
+DART_TEST = """import 'package:flutter_test/flutter_test.dart';
+import 'package:liwan/features/payment/domain/entities/payment_status.dart';
+import '../helpers/fakes.dart';
+
+void main() {
+  group('PaymentStatus', () {
+    test('unknown status is not success', () {});
+    testWidgets("renders", (tester) async {});
+  });
+}
+"""
+
+
+def dart_repo(**extra):
+    return {
+        "pubspec.yaml": "name: liwan\ndescription: app\n",
+        "lib/features/payment/domain/entities/payment_status.dart": "enum PaymentStatus {}",
+        "lib/shared/widgets/app_button.dart": "class AppButton {}",
+        "test/payment_status_test.dart": DART_TEST,
+        **extra,
+    }
+
+
+def test_dart_test_files_importing_a_changed_file_by_package_uri_are_candidates():
+    provider = FakeProvider(dart_repo())
+    found = discover_tests(provider, REPO, COMMIT, report(
+        ("lib/features/payment/domain/entities/payment_status.dart", []), ("lib/shared/widgets/app_button.dart", []),
+        findings=[("F1", "lib/features/payment/domain/entities/payment_status.dart")]),
+        ai_findings=[{"id": "R2", "file": "lib/features/payment/domain/entities/payment_status.dart"}])
+    assert (found["test_files_found"], found["tests_found"], found["candidate_count"]) == (1, 2, 2)
+    assert {item["name"] for item in found["candidates"]} == {"unknown status is not success", "renders"}
+    first = next(item for item in found["candidates"] if item["name"] == "unknown status is not success")
+    assert first["line"] == 7 and first["related_static_finding_ids"] == ["F1"] and first["related_ai_finding_ids"] == ["R2"]
+    assert first["reasons"] == [{"kind": "imports_changed_module",
+                                 "changed_file": "lib/features/payment/domain/entities/payment_status.dart"}]
+    assert found["coverage_gaps"] == [{"changed_file": "lib/shared/widgets/app_button.dart",
+                                       "reason": "No discovered test file imports this module.",
+                                       "static_finding_ids": [], "ai_finding_ids": []}]
+    assert found["executed"] is False and "pubspec.yaml" in provider.read
+
+
+def test_dart_relative_imports_and_packages_in_a_subdirectory_are_resolved():
+    files = {
+        "app/pubspec.yaml": "name: shop\n",
+        "app/lib/cart.dart": "class Cart {}",
+        "app/lib/src/price.dart": "class Price {}",
+        "app/test/cart_test.dart": "import 'package:shop/cart.dart';\nvoid main() { test('adds', () {}); }\n",
+        "app/test/src/price_test.dart": "import '../../lib/src/price.dart';\nvoid main() { blocTest<A, B>('prices', build: () {}); }\n",
+        "app/test/other_test.dart": "import 'package:other/cart.dart';\nvoid main() { test('x', () {}); }\n",
+    }
+    found = discover_tests(FakeProvider(files), REPO, COMMIT, report(("app/lib/cart.dart", []), ("app/lib/src/price.dart", [])))
+    assert {(item["file"], item["name"]) for item in found["candidates"]} == {
+        ("app/test/cart_test.dart", "adds"), ("app/test/src/price_test.dart", "prices")}
+    assert found["coverage_gaps"] == [] and found["tests_found"] == 3
+
+
+def test_an_unreadable_test_file_is_reported_not_counted_as_empty():
+    found = discover_tests(FakeProvider(dart_repo(**{"test/big_test.dart": ""})), REPO, COMMIT,
+                           report(("lib/shared/widgets/app_button.dart", [])))
+    assert found["unparsed_test_files"] == ["test/big_test.dart"] and found["incomplete"] is True
+
+
+def test_no_pubspec_is_read_when_no_dart_file_changed():
+    provider = FakeProvider(dart_repo())
+    discover_tests(provider, REPO, COMMIT, report(("README.md", [])))
+    assert "pubspec.yaml" not in provider.read

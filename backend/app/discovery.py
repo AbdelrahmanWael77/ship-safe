@@ -1,4 +1,4 @@
-"""Phase 4 task A: find existing pytest tests that may exercise a change.
+"""Phase 4 task A: find existing tests (pytest or Dart/Flutter) that may exercise a change.
 
 Static only. Test files are read as text and parsed with ``ast``; nothing is
 imported, collected or executed, so a hostile test file cannot run code here.
@@ -8,6 +8,7 @@ module is not known to cover the change, and no test here has been run.
 from __future__ import annotations
 
 import ast
+import posixpath
 import re
 from pathlib import PurePosixPath
 
@@ -22,23 +23,69 @@ MAX_TEST_FILE_CHARS = 400_000
 MAX_CANDIDATES = 300
 
 _TEST_FILE = re.compile(r"^(test_.+|.+_test)\.py$")
+#: Dart/Flutter convention (``flutter test`` / ``dart test`` defaults): files named *_test.dart.
+_DART_TEST_FILE = re.compile(r"^.+_test\.dart$")
+#: ``import '...';`` / ``export '...';`` directives of a Dart file.
+_DART_IMPORT = re.compile(r"""^\s*(?:import|export)\s+['"]([^'"]+)['"]""", re.M)
+#: test('name', ...), testWidgets("name", ...), blocTest<C, S>('name', ...).
+_DART_TEST = re.compile(r"""\b(test|testWidgets|blocTest(?:<[^>()]*>)?)\s*\(\s*(['"])(.+?)\2""")
+#: ``name: my_app`` in pubspec.yaml.
+_PUBSPEC_NAME = re.compile(r"^name:\s*([A-Za-z_][A-Za-z0-9_]*)\s*$", re.M)
+#: pubspec.yaml files read to learn package names (one read each).
+MAX_PUBSPECS = 10
 
 HEURISTICS = [
-    "A file is a test file when its name matches pytest's defaults: test_*.py or *_test.py.",
-    "Tests are module-level functions named test_* and test_* methods of classes named Test*. "
+    "A file is a test file when its name matches pytest's defaults (test_*.py or *_test.py) "
+    "or the Dart/Flutter default (*_test.dart).",
+    "Python tests are module-level functions named test_* and test_* methods of classes named Test*. "
     "Parametrized cases and tests generated at run time are not expanded.",
+    "Dart tests are calls to test(), testWidgets() or blocTest() with a literal name. A Dart test file is a "
+    "candidate when it imports a changed .dart file, by a relative path or as package:<name>/... where "
+    "<name> comes from a pubspec.yaml in the repository.",
     "A test is a candidate when its file imports a changed Python module (matched on the module's "
     "dotted path or a suffix of it with at least two segments, or the bare name for a top-level module).",
     "A candidate ranks higher when the test's own body mentions a function that the change touched.",
-    "A changed file is a coverage gap when no discovered test file imports it. Non-Python files are "
-    "always listed as gaps because imports cannot be traced to them.",
+    "A changed file is a coverage gap when no discovered test file imports it. Files that are neither "
+    "Python nor Dart are always listed as gaps because imports cannot be traced to them.",
+    "A test file that cannot be read (for example larger than the read limit, or stored in Git LFS) or "
+    "parsed is listed as not parsed, so the discovery is marked incomplete.",
     "Test files are parsed, never imported or run. Indirect imports, fixtures in conftest.py and "
     "dynamic imports are not followed, so both false candidates and missed tests are possible.",
 ]
 
 
 def is_test_file(path: str) -> bool:
-    return bool(_TEST_FILE.match(PurePosixPath(path).name))
+    name = PurePosixPath(path).name
+    return bool(_TEST_FILE.match(name) or _DART_TEST_FILE.match(name))
+
+
+def _dart_packages(provider: ChangeProvider, repository: RepositoryRef, commit: str, paths: list[str]) -> dict[str, str]:
+    """Package name -> directory that holds its ``lib/`` (\"\" for the repository root)."""
+    packages: dict[str, str] = {}
+    pubspecs = sorted((path for path in paths if PurePosixPath(path).name == "pubspec.yaml"),
+                      key=lambda path: (path.count("/"), path))[:MAX_PUBSPECS]
+    for path in pubspecs:
+        match = _PUBSPEC_NAME.search(provider.read_file(repository, commit, path) or "")
+        if match:
+            packages.setdefault(match.group(1), posixpath.dirname(path))
+    return packages
+
+
+def _dart_imports(source: str, test_path: str, packages: dict[str, str]) -> set[str]:
+    """Repository paths of the Dart files a Dart file imports (only those that can be resolved)."""
+    found: set[str] = set()
+    for uri in _DART_IMPORT.findall(source):
+        if uri.startswith("package:"):
+            name, _, rest = uri[len("package:"):].partition("/")
+            if name in packages and rest:
+                found.add(posixpath.normpath(posixpath.join(packages[name], "lib", rest)))
+        elif ":" not in uri:
+            found.add(posixpath.normpath(posixpath.join(posixpath.dirname(test_path), uri)))
+    return found
+
+
+def _dart_tests(source: str) -> list[tuple[str, int]]:
+    return [(match.group(3), source.count("\n", 0, match.start()) + 1) for match in _DART_TEST.finditer(source)]
 
 
 def _parse(source: str) -> ast.AST | None:
@@ -122,6 +169,7 @@ def discover_tests(
     changed_paths = [item["path"] for item in changed]
     changed_functions = {item["path"]: set(item.get("changed_functions") or []) for item in changed}
     modules = {path: module_names(path) for path in changed_paths if path.endswith(".py") and not is_test_file(path)}
+    dart_changed = {path for path in changed_paths if path.endswith(".dart") and not is_test_file(path)}
 
     static_by_file: dict[str, list[str]] = {}
     for finding in report.get("findings", []):
@@ -130,13 +178,37 @@ def discover_tests(
     for index, finding in enumerate(ai_findings or []):
         ai_by_file.setdefault(finding.get("file", ""), []).append(str(finding.get("id") or f"AI-{index + 1}"))
 
-    all_test_files = sorted(path for path in provider.list_files(repository, commit) if is_test_file(path))
+    paths = provider.list_files(repository, commit)
+    all_test_files = sorted(path for path in paths if is_test_file(path))
     test_files, unread = all_test_files[:max_files], max(0, len(all_test_files) - max_files)
+    packages = _dart_packages(provider, repository, commit, paths) if dart_changed and any(
+        path.endswith(".dart") for path in test_files) else {}
 
     candidates, unparsed, tests_found = [], [], 0
     covered: set[str] = set()
     for path in test_files:
-        tree = _parse(provider.read_file(repository, commit, path))
+        source = provider.read_file(repository, commit, path)
+        if not source or len(source) > MAX_TEST_FILE_CHARS:
+            # Empty here also means unreadable (too large, LFS, gone): never count it as "no tests".
+            unparsed.append(path)
+            continue
+        if path.endswith(".dart"):
+            dart_tests = _dart_tests(source)
+            tests_found += len(dart_tests)
+            imported_changed = sorted(_dart_imports(source, path, packages) & dart_changed)
+            if not imported_changed:
+                continue
+            covered.update(imported_changed)
+            for name, line in dart_tests:
+                candidates.append({
+                    "test_id": f"{path}::{name}", "file": path, "name": name, "line": line,
+                    "changed_in_this_scan": path in changed_paths,
+                    "reasons": [{"kind": "imports_changed_module", "changed_file": changed_file} for changed_file in imported_changed],
+                    "related_static_finding_ids": sorted({i for f in imported_changed for i in static_by_file.get(f, [])}),
+                    "related_ai_finding_ids": sorted({i for f in imported_changed for i in ai_by_file.get(f, [])}),
+                })
+            continue
+        tree = _parse(source)
         if tree is None:
             unparsed.append(path)
             continue
@@ -170,11 +242,11 @@ def discover_tests(
     for path in changed_paths:
         if is_test_file(path) or path in covered:
             continue
-        python = path.endswith(".py")
+        traceable = path.endswith((".py", ".dart"))
         gaps.append({
             "changed_file": path,
-            "reason": ("No discovered test file imports this module." if python
-                       else "Not a Python module; imports cannot be traced to it."),
+            "reason": ("No discovered test file imports this module." if traceable
+                       else "Not a Python or Dart file; imports cannot be traced to it."),
             "static_finding_ids": static_by_file.get(path, []),
             "ai_finding_ids": ai_by_file.get(path, []),
         })

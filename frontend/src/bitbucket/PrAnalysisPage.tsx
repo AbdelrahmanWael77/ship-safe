@@ -39,7 +39,7 @@ const writeAutoReview = (repositoryId: string, value: AIProviderName | null) => 
  * commit shown on this page, so the API refuses it (409 `head_changed`) when
  * the pull request has moved on; the page then reloads the pull request.
  */
-export function PrAnalysisPage({ status, selection, navigate, onScanned, onOpenReport, providers = null }: {
+export function PrAnalysisPage({ status, selection, navigate, onScanned, onOpenReport, providers = null, onShown, onReviewed }: {
   status: Loaded<BitbucketStatus>
   selection: BitbucketSelection
   navigate: BitbucketNavigate
@@ -47,6 +47,10 @@ export function PrAnalysisPage({ status, selection, navigate, onScanned, onOpenR
   onScanned: () => void
   /** Open a stored scan in the existing dashboard pages, optionally on a given page. */
   onOpenReport: (id: string, page?: 'findings' | 'tests') => void
+  /** A stored (not mock) report is now on screen: the dashboard pages follow it. */
+  onShown?: (report: Report) => void
+  /** An AI review of a stored scan was just stored. */
+  onReviewed?: (scanId: string) => void
   /** The AI review providers of the API server (null while unknown). */
   providers?: AIProvider[] | null
 }) {
@@ -100,7 +104,7 @@ export function PrAnalysisPage({ status, selection, navigate, onScanned, onOpenR
     )
   }
 
-  const show = (next: Report) => { setReport(next); setSelectedFile(next.files[0]?.path ?? ''); setAIReview(null); setAIState(null) }
+  const show = (next: Report) => { setReport(next); setSelectedFile(next.files[0]?.path ?? ''); setAIReview(null); setAIState(null); if (!next.mock) onShown?.(next) }
 
   /** Send a stored scan to the confirmed AI provider (the person ticked the checkbox). */
   const reviewWithAI = async (scanId: string, provider: AIProvider) => {
@@ -108,6 +112,7 @@ export function PrAnalysisPage({ status, selection, navigate, onScanned, onOpenR
     setAIState({ kind: 'running', label: provider.label })
     try {
       const review = await runModelReview(scanId, provider.provider, true)
+      onReviewed?.(scanId)
       if (current.current !== started) return
       setAIReview(review); setAIState(null)
     } catch (error) {
@@ -215,6 +220,14 @@ export function PrAnalysisPage({ status, selection, navigate, onScanned, onOpenR
             <div><dt>Head commit (source)</dt><dd><Sha value={pull.source_sha} /></dd></div>
             <div><dt>Target branch tip</dt><dd><Sha value={pull.target_sha} /></dd></div>
           </dl>
+          {(() => {
+            const sameHead = pull.source_sha ? pull.scans.find(item => item.binding.head_commit === pull.source_sha) : undefined
+            return sameHead ? (
+              <p className="bb-footnote" role="note" aria-label="Already scanned">
+                Already scanned at this head commit ({when(sameHead.created_at)}). Scanning again gives the same static result{autoProvider ? ` and sends the code to ${autoProvider.label} again for another paid review` : ''}. Use View in the list below to open it.
+              </p>
+            ) : null
+          })()}
           <p className="bb-note">A scan reads from Bitbucket only. It compares the merge base of the two branches with the head commit above and is stored bound to both full commit ids. Static analysis only: no code is run.</p>
           {!pull.scannable && (
             <p className="bb-footnote" role="note">This pull request cannot be scanned: {pull.not_scannable_reason ?? 'Bitbucket did not report its commits.'}{pull.not_scannable_code && <> (<code>{pull.not_scannable_code}</code>)</>}</p>

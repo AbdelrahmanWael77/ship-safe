@@ -19,7 +19,11 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 const post = <T,>(path: string, body: unknown) =>
   api<T>(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 
-export function TestProposalsPanel({ scanId }: { scanId: string }) {
+/**
+ * `runRefused`: the scan is not of the synthetic demo repository, so the API refuses every run
+ * request (403) and records nothing. Unknown is treated as refused.
+ */
+export function TestProposalsPanel({ scanId, runRefused = false }: { scanId: string; runRefused?: boolean }) {
   const base = `/api/scans/${scanId}/tests/proposals`
   const list = useLoad(() => api<TestProposal[]>(base), `test-proposals:${scanId}`)
   const proposals = (list.data ?? []).filter(item => item.scan_id === scanId)
@@ -60,7 +64,7 @@ export function TestProposalsPanel({ scanId }: { scanId: string }) {
       )}
       {list.data && proposals.length === 0 && <div className="empty-state"><h3>No test has been proposed for this scan</h3><p>Add one below. It will wait for an explicit decision.</p></div>}
 
-      {proposals.map(item => <Proposal key={item.id} proposal={item} base={base} onChanged={list.reload} />)}
+      {proposals.map(item => <Proposal key={item.id} proposal={item} base={base} onChanged={list.reload} runRefused={runRefused} />)}
 
       <details className="proposal-add">
         <summary>Propose a new test file</summary>
@@ -69,13 +73,13 @@ export function TestProposalsPanel({ scanId }: { scanId: string }) {
             <input aria-label="Target path" value={form.target_path} onChange={event => setForm({ ...form, target_path: event.target.value })} /></label>
           <label><span className="micro-label">WHO WROTE THE TEST TEXT</span>
             <select aria-label="Origin" value={form.origin} onChange={event => setForm({ ...form, origin: event.target.value as TestProposal['origin'] })}>
-              <option value="human">A person</option><option value="imported_ai_review">An imported AI review (unverified)</option>
+              <option value="human">A person</option><option value="imported_ai_review">An AI review (unverified)</option>
             </select></label>
           <label><span className="micro-label">FINDING ID (optional)</span>
             <input aria-label="Finding id" value={form.finding_ref} onChange={event => setForm({ ...form, finding_ref: event.target.value })} /></label>
           <label><span className="micro-label">WHY (optional)</span>
             <input aria-label="Rationale" value={form.rationale} onChange={event => setForm({ ...form, rationale: event.target.value })} /></label>
-          <label className="proposal-form-wide"><span className="micro-label">TEST SOURCE (pytest; stored as text, not run)</span>
+          <label className="proposal-form-wide"><span className="micro-label">TEST SOURCE (Python pytest only; stored as text, not run)</span>
             <textarea aria-label="Test source" rows={10} spellCheck={false} value={form.content} onChange={event => setForm({ ...form, content: event.target.value })} /></label>
           <div className="proposal-form-wide proposal-actions">
             <button className="primary-button" onClick={add} disabled={adding || !form.content.trim() || !form.target_path.trim()}>{adding ? 'Storing…' : 'Store proposal'}</button>
@@ -87,7 +91,7 @@ export function TestProposalsPanel({ scanId }: { scanId: string }) {
   )
 }
 
-function Proposal({ proposal, base, onChanged }: { proposal: TestProposal; base: string; onChanged: () => void }) {
+function Proposal({ proposal, base, onChanged, runRefused }: { proposal: TestProposal; base: string; onChanged: () => void; runRefused: boolean }) {
   const [name, setName] = useState('')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -123,14 +127,16 @@ function Proposal({ proposal, base, onChanged }: { proposal: TestProposal; base:
       <div className="proposal-head">
         <div>
           <h4><code>{proposal.target_path}</code> <Pill kind={status.kind}>{status.label}</Pill>{proposal.stale && <Pill kind="danger">Stale · pull request has new commits</Pill>}</h4>
-          <p>Proposed {when(proposal.created_at)} · text written by {proposal.origin === 'human' ? 'a person' : 'an imported AI review (unverified)'}{proposal.finding_ref ? <> · for finding <code>{proposal.finding_ref}</code></> : null} · commits <code>{proposal.base_commit.slice(0, 12)}</code> → <code>{proposal.head_commit.slice(0, 12)}</code></p>
+          <p>Proposed {when(proposal.created_at)} · text written by {proposal.origin === 'human' ? 'a person' : 'an AI review (unverified)'}{proposal.finding_ref ? <> · for finding <code>{proposal.finding_ref}</code></> : null} · commits <code>{proposal.base_commit.slice(0, 12)}</code> → <code>{proposal.head_commit.slice(0, 12)}</code></p>
           {proposal.rationale && <p>{proposal.rationale}</p>}
         </div>
-        <button className="secondary-button" onClick={requestRun} disabled={busy || !proposal.eligible_to_run || name.trim().length < 2}
-          title="No verified isolated runner is available. A request is recorded as BLOCKED; nothing is run."><Play size={14} /> Run <Ban size={13} /> BLOCKED</button>
+        <button className="secondary-button" onClick={requestRun} disabled={busy || runRefused || !proposal.eligible_to_run || name.trim().length < 2}
+          title={runRefused ? 'Not available for this repository: runs can only be requested for the synthetic demo repository.' : 'No verified isolated runner is available. A request is recorded as BLOCKED; nothing is run.'}><Play size={14} /> Run <Ban size={13} /> BLOCKED</button>
       </div>
       {runResult && <p className="proposal-run-result" role="status">{runResult}</p>}
-      <p className="proposal-blocked">Run is blocked: no verified isolated runner is available. {proposal.eligible_to_run ? 'This proposal is approved for these commits and would be allowed to run once one is.' : proposal.stale ? 'This proposal is stale and could not run even then.' : 'Only an approved proposal could run.'}</p>
+      <p className="proposal-blocked">{runRefused
+        ? 'Run is not available for this repository: ShipSafe only accepts run requests for the synthetic demo repository, and even there nothing is executed. Run this test in your own environment.'
+        : <>Run is blocked: no verified isolated runner is available. {proposal.eligible_to_run ? 'This proposal is approved for these commits and would be allowed to run once one is.' : proposal.stale ? 'This proposal is stale and could not run even then.' : 'Only an approved proposal could run.'}</>}</p>
 
       <div className="diff-viewer proposal-diff">
         <div className="diff-toolbar"><span>New file · {proposal.target_path}</span><span className="diff-count"><b>+{lines.length}</b><em>-0</em></span></div>

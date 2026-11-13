@@ -56,7 +56,7 @@ export function ReleaseAssessmentPanel({ scanId }: { scanId: string }) {
           <div className="panel-head"><div><h3>What was assessed</h3><p>Scanned {when(result.identity.scanned_at)} · assessment built {when(result.generated_at)}</p></div></div>
           <dl className="bb-facts">
             <div><dt>Repository</dt><dd>{result.identity.repo_name} · {result.identity.provider}{result.identity.repository_id ? <> · <code>{result.identity.repository_id}</code></> : null}{result.identity.pull_request_id != null ? <> · pull request <code>{result.identity.pull_request_id}</code></> : null}</dd></div>
-            <div><dt>Change</dt><dd><code>{result.identity.base_ref}</code> → <code>{result.identity.head_ref}</code> ({result.identity.comparison})</dd></div>
+            <div><dt>Change</dt><dd>{result.identity.pull_request_id != null ? <><code>{result.identity.head_ref}</code> → <code>{result.identity.base_ref}</code> (pull request source → target, {result.identity.comparison})</> : <><code>{result.identity.base_ref}</code> → <code>{result.identity.head_ref}</code> ({result.identity.comparison})</>}</dd></div>
             <div><dt>Base commit</dt><dd>{result.identity.base_commit ? <code className="bb-sha">{result.identity.base_commit}</code> : 'Not recorded'}</dd></div>
             <div><dt>Head commit</dt><dd>{result.identity.head_commit ? <code className="bb-sha">{result.identity.head_commit}</code> : 'Not recorded'}</dd></div>
           </dl>

@@ -11,7 +11,7 @@ import {
   Shield, ShieldAlert, ShieldCheck, ShieldQuestion, UploadCloud, Bot, FileArchive, SlidersHorizontal,
   Sparkles, Terminal, TrendingUp, X, Zap,
 } from 'lucide-react'
-import { api, API_BASE as API } from './api'
+import { api, API_BASE as API, SCAN_LIST_LIMIT, SCAN_LIST_PATH } from './api'
 import { DiffViewer, Empty, FileIcon, FindingCard, Pill, Severity } from './components'
 import { ReleaseAssessmentPanel } from './ReleaseAssessmentPanel'
 import { TestDiscoveryPanel } from './TestDiscoveryPanel'
@@ -46,6 +46,13 @@ const relative = (date: string) => {
 const shortRef = (value: string) => value.replace(/^feature\//, '')
 /** A scan of a Bitbucket pull request (as opposed to a local or demo scan). */
 const isPullRequestScan = (item: Pick<ScanHistory, 'binding'>) => item.binding?.provider === 'bitbucket-cloud' && item.binding.pull_request_id != null
+/** Branches of a change, written the way its source writes them: a pull request as source → target (as Bitbucket shows it), a local comparison as base → compared branch. */
+const changeText = (baseRef: string, headRef: string, pullRequest: boolean) => pullRequest ? `${headRef} → ${baseRef}` : `${baseRef} → ${headRef}`
+const aiRecommendation = (value: string) => value === 'block_release' ? 'suggests Block release' : value === 'manual_review' ? 'suggests Manual review' : 'Insufficient evidence'
+/** "2 critical, 6 high" from a review's findings. */
+const severityCounts = (findings: { severity: string }[]) => ['critical', 'high', 'medium', 'low']
+  .map(level => [level, findings.filter(item => item.severity === level).length] as const)
+  .filter(([, count]) => count > 0).map(([level, count]) => `${count} ${level}`).join(', ')
 const riskColor = (score: number) => score >= 65 ? 'danger' : score >= 25 ? 'warning' : 'good'
 
 function Logo({ size = 38 }: { size?: number }) {
@@ -104,6 +111,8 @@ export default function App() {
   const [shownReviewId, setShownReviewId] = useState<string | null>(null)
   const [importStatus, setImportStatus] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
   const [modelAck, setModelAck] = useState(false)
+  // Bumped to read the reviews of the scan on screen again (a review was added elsewhere, or the scan was reopened).
+  const [reviewsTick, setReviewsTick] = useState(0)
   // Copy button on the Claude Review page. The clipboard can refuse (no permission,
   // or a page not served from localhost/https), so a failure is shown, never thrown.
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
@@ -131,7 +140,7 @@ export default function App() {
   }
 
   const refreshHistory = useCallback(async () => {
-    const records = await api<ScanHistory[]>('/api/scans')
+    const records = await api<ScanHistory[]>(SCAN_LIST_PATH)
     setHistory(records)
     return records
   }, [])
@@ -154,7 +163,7 @@ export default function App() {
     setMode(live ? 'live' : 'demo')
     const initLive = async () => {
       try {
-        const records = await api<ScanHistory[]>('/api/scans')
+        const records = await api<ScanHistory[]>(SCAN_LIST_PATH)
         if (!mounted.current) return
         setApiConnected(true); setHistory(records)
         const latest = records.find(isPullRequestScan)
@@ -173,7 +182,7 @@ export default function App() {
         if (!mounted.current) return
         setDemo(info); setApiConnected(true)
         setHead(info.default_head)
-        const records = await api<ScanHistory[]>('/api/scans')
+        const records = await api<ScanHistory[]>(SCAN_LIST_PATH)
         if (!mounted.current) return
         setHistory(records)
         if (records.length) {
@@ -211,7 +220,7 @@ export default function App() {
       .then(context => { if (active) setShareAckRequired(context.acknowledgement_required !== false) })
       .catch(() => undefined)
     return () => { active = false }
-  }, [report?.id])
+  }, [report?.id, reviewsTick])
 
   const importAIReview = async () => {
     if (!report || !aiFile) return
@@ -270,11 +279,18 @@ export default function App() {
     setLoading(true); setError(null)
     try {
       const old = await api<Report>(`/api/scans/${id}`)
-      setReport(old); setHead(old.head_ref); setBase(old.base_ref)
+      setReport(old); setReviewsTick(tick => tick + 1); setHead(old.head_ref); setBase(old.base_ref)
       setSelectedFile(old.files[0]?.path || ''); setPage(target)
       setNotice(`Loaded saved scan from ${new Date(old.created_at).toLocaleString()}.`)
     } catch (exc) { setError(exc instanceof Error ? exc.message : String(exc)) }
     finally { setLoading(false) }
+  }
+
+  // A scan shown on the PR analysis page (new or stored) becomes the dashboard's scan too, so
+  // Overview, Risk findings, Test intelligence and the other pages never show an older one.
+  const showInDashboard = (next: Report) => {
+    setReport(previous => (previous?.id === next.id ? previous : next))
+    setSelectedFile(next.files[0]?.path || '')
   }
 
   const goFile = (path: string) => { setSelectedFile(path); setPage('changes') }
@@ -380,7 +396,7 @@ export default function App() {
                 {report.findings.length ? <div className="risk-list">{report.findings.slice(0, 4).map(f => <button className="risk-row" key={f.id} onClick={() => setPage('findings')}><span className={`risk-symbol ${f.severity}`}><AlertTriangle size={18}/></span><span className="risk-details"><strong>{f.title}</strong><small>{f.file} · {f.category}</small></span><Severity level={f.severity}/><ChevronRight size={16} className="risk-chevron"/></button>)}</div> : <Empty icon={ShieldCheck} title={coverageNote ? 'No static findings' : 'No known patterns flagged'} description={`${coverageNote ?? 'This is not a guarantee that the change is safe. Human review is still necessary.'}${aiOfScan?.findings.length ? ` The AI review proposed ${aiOfScan.findings.length} unverified finding${aiOfScan.findings.length !== 1 ? 's' : ''} (see Risk findings).` : ''}`}/>}
                 <div className="risk-panel-footer"><Info size={15}/><span>Heuristic findings are leads for review, not verified defects. The rules read Python files only, so 0 is not proof of safety.</span></div>
               </div>
-              <div className="panel readiness-panel"><div className="panel-head"><div><h3>Release readiness</h3><p>Heuristic score, not an approval</p></div><MoreHorizontal size={20} className="dim"/></div><div className="readiness-inner"><ProgressRing score={report.summary.risk_score}/><div className="readiness-result"><Pill kind={riskColor(report.summary.risk_score)} dot>{report.summary.recommendation}</Pill><p>{report.findings.length ? 'Review the identified patterns and verify with regression tests before release.' : 'No high-risk patterns detected. Additional tests and review may still be required.'}</p></div></div><div className="readiness-footer"><ShieldQuestion size={17}/><div><strong>Human approval required</strong><span>ShipSafe never marks a release fully safe.</span></div></div></div>
+              <div className="panel readiness-panel"><div className="panel-head"><div><h3>Release readiness</h3><p>Heuristic score, not an approval</p></div><MoreHorizontal size={20} className="dim"/></div><div className="readiness-inner"><ProgressRing score={report.summary.risk_score}/><div className="readiness-result"><Pill kind={riskColor(report.summary.risk_score)} dot>{report.summary.recommendation}</Pill><p>{report.findings.length ? 'Review the identified patterns and verify with regression tests before release.' : coverageNote ? 'No static pattern flagged, but the static rules read Python files only. This score says nothing about the other changed files.' : 'No static pattern flagged. Additional tests and review may still be required.'}</p>{aiOfScan && <p className="readiness-ai" role="note"><strong>AI review ({reviewOrigin(aiOfScan)}, unverified):</strong> {aiRecommendation(aiOfScan.recommendation)}{aiOfScan.findings.length ? ` · ${severityCounts(aiOfScan.findings)}` : ' · no findings'}. Not included in this score.</p>}</div></div><div className="readiness-footer"><ShieldQuestion size={17}/><div><strong>Human approval required</strong><span>ShipSafe never marks a release fully safe.</span></div></div></div>
             </div>
             <div className="dashboard-grid lower-grid">
               <div className="panel changes-panel"><div className="panel-head"><div><h3>Changed files</h3><p>Source-controlled changes from Git</p></div><button className="ghost-button" onClick={() => setPage('changes')}>Explore diff <ArrowUpRight size={15}/></button></div><div className="changed-files-list">{report.files.slice(0, 5).map(f => <button key={f.path} className="changed-file-row" onClick={() => goFile(f.path)}><FileIcon path={f.path}/><span className="file-name"><strong>{f.path.split('/').pop()}</strong><small>{f.path}</small></span><span className="file-bars"><i style={{width: Math.min(65, f.additions * 8 + 6)}}/><b style={{width: Math.min(40, f.deletions * 8 + 6)}}/></span><span className="line-changes"><em>+{f.additions}</em><b>-{f.deletions}</b></span></button>)}</div></div>
@@ -390,7 +406,7 @@ export default function App() {
             <div className="footnote"><Info size={15}/> Git findings are heuristic. Imported AI suggestions are separate, unverified, and never change test execution status.</div>
           </>}
         </>}
-        {isBitbucketPage(page) && <BitbucketSection page={page} status={bitbucketStatus} selection={bitbucketSelection} navigate={bitbucketNavigate} onScanned={() => { void refreshHistory().catch(() => undefined) }} onOpenReport={(id, target) => { void openHistory(id, target) }} providers={Array.isArray(aiProviders.data) ? aiProviders.data : aiProviders.error ? [] : null}/>}
+        {isBitbucketPage(page) && <BitbucketSection page={page} status={bitbucketStatus} selection={bitbucketSelection} navigate={bitbucketNavigate} onScanned={() => { void refreshHistory().catch(() => undefined) }} onShown={showInDashboard} onReviewed={id => { if (id === report?.id) setReviewsTick(tick => tick + 1) }} onOpenReport={(id, target) => { void openHistory(id, target) }} providers={Array.isArray(aiProviders.data) ? aiProviders.data : aiProviders.error ? [] : null}/>}
         {page !== 'overview' && !isBitbucketPage(page) && <>
           <div className="subpage-heading"><div className="eyebrow"><span className="eyebrow-line"/> WORKSPACE / {page.toUpperCase()}</div><div className="subpage-title"><div><h1>{pageName}<span className="title-dot">.</span></h1><p>{({overview:'',changes:'Review actual changed files, functions, and Git patch details.',findings:'Investigate suspected problems and the evidence behind them.',tests:'Identify missing regression coverage. No tests are claimed as executed.',ai:'Two ways to get an unverified AI review: the API server sends the scan to OpenAI or Gemini (when its key is configured on the server), or you review it in your own Claude Code session and import the JSON. ShipSafe never calls Claude directly.',assessment:'Stored evidence for this scan, kept apart by kind. Not an approval to release.',history:'Go back to previous local analysis reports.',settings:'Local-first setup, security boundaries, and data sources.'} as Record<Page,string>)[page]}</p></div>{report && page !== 'settings' && <a className="secondary-button export-link" href={`${API}/api/scans/${report.id}/export`} download><Download size={16}/> Export JSON</a>}</div></div>
           {page === 'changes' && report && <div className="code-layout">
@@ -406,7 +422,7 @@ export default function App() {
                 : <div className="ai-risk-empty"><p className="small-para">Run an AI model review (OpenAI or Gemini) or import a Claude Code review; its findings appear here, labelled as unverified.</p><button className="secondary-button" onClick={() => setPage('ai')}><Bot size={16}/> Open Claude Review</button></div>}
             </div>
             <div className="disclaimer-box"><Info size={18}/>{report.disclaimer}</div></>}
-          {page === 'tests' && report && <div className="test-layout"><div className="panel test-main"><div className="test-status-banner"><span className="test-pictogram"><FlaskConical size={24}/></span><div><Pill kind="warning">NOT EXECUTED</Pill><h2>Test intelligence</h2><p>Candidate regression scenarios come from the static findings of this diff. You can write a test proposal below, approve it and press Run, but execution is currently blocked: ShipSafe has no verified isolated runner, so every run request is recorded as BLOCKED and no repository code is executed. Existing tests are found in Python (pytest) files only.</p></div></div><div className="panel-head test-list-head"><div><h3>Suggested regression scenarios</h3><p>Generated from observed risk categories</p></div><span className="light-count">{report.test_suggestions.length} suggestions</span></div>{report.test_suggestions.length ? report.test_suggestions.map((item, index) => <div className="test-item" key={`${item.file}-${index}`}><span className="test-number">{String(index + 1).padStart(2, '0')}</span><div><strong>{item.scenario}</strong><small><FileCode2 size={13}/>{item.file} · {item.category}</small></div><Pill kind="muted">Proposed</Pill></div>) : <Empty icon={CheckCircle2} title="No targeted scenarios yet" description={coverageNote ?? (live ? 'No risk patterns were flagged in this pull request. Normal engineering tests are still recommended.' : 'Try a risk-bearing demo branch. Normal engineering tests are still recommended.')}/>}
+          {page === 'tests' && report && <div className="test-layout"><div className="panel test-main"><div className="test-status-banner"><span className="test-pictogram"><FlaskConical size={24}/></span><div><Pill kind="warning">NOT EXECUTED</Pill><h2>Test intelligence</h2><p>Candidate regression scenarios come from the static findings of this diff. You can write a test proposal below and approve it, but no test is ever executed: ShipSafe has no verified isolated runner. For the synthetic demo repository a run request is recorded as BLOCKED; for any other repository, including Bitbucket pull requests, Run is not available. Existing tests are found in Python (pytest) and Dart/Flutter (*_test.dart) files; proposals accept Python (pytest) files only.</p></div></div><div className="panel-head test-list-head"><div><h3>Suggested regression scenarios</h3><p>Generated from observed risk categories</p></div><span className="light-count">{report.test_suggestions.length} suggestions</span></div>{report.test_suggestions.length ? report.test_suggestions.map((item, index) => <div className="test-item" key={`${item.file}-${index}`}><span className="test-number">{String(index + 1).padStart(2, '0')}</span><div><strong>{item.scenario}</strong><small><FileCode2 size={13}/>{item.file} · {item.category}</small></div><Pill kind="muted">Proposed</Pill></div>) : <Empty icon={CheckCircle2} title="No targeted scenarios yet" description={coverageNote ?? (live ? 'No risk patterns were flagged in this pull request. Normal engineering tests are still recommended.' : 'Try a risk-bearing demo branch. Normal engineering tests are still recommended.')}/>}
             <div className="ai-test-ideas" role="region" aria-label="AI test ideas">
               <div className="panel-head test-list-head"><div><h3>Test ideas from the AI review <Pill kind="warning">AI · NOT RUN</Pill></h3><p>{aiOfScan ? `${reviewOrigin(aiOfScan)} · hypotheses to turn into real tests` : 'No AI review of this scan yet.'}</p></div><span className="light-count">{aiOfScan?.test_ideas.length ?? 0} ideas</span></div>
               {aiOfScan?.test_ideas.length ? aiOfScan.test_ideas.map((idea, index) => <div className="test-item" key={`ai-${index}`}><span className="test-number">AI{index + 1}</span><div><strong>{idea.title}</strong><p className="ai-test-scenario">{idea.scenario}</p><small>Expected: {idea.expected_behavior}{idea.file ? ` · ${idea.file}` : ''}</small></div><Pill kind="muted">Not run</Pill></div>)
@@ -414,7 +430,7 @@ export default function App() {
             </div></div><div className="test-right">{!live && <div className="panel"><div className="panel-head"><div><h3>Run the fixture suite</h3><p>Manual command on trusted code</p></div><Terminal size={18}/></div><div className="terminal-mini"><span className="terminal-dot-row"><i/><i/><i/></span><code>cd backend/demo-repo<br/>python -m pytest -q</code></div><p className="small-para">The fixture's existing happy-path tests intentionally miss the injected regressions. Passing them does not verify the flagged behavior.</p><div className="manual-tag"><LockKeyhole size={14}/> Only run code you explicitly trust.</div></div>}<div className="panel score-note"><ShieldQuestion size={22}/><h3>Evidence over confidence</h3><p>Suggested tests are hypotheses. A confirmed regression requires an executable test that fails before the fix and passes afterward.</p></div></div></div>}
           {page === 'assessment' && report && <ReleaseAssessmentPanel scanId={report.id}/>}
           {page === 'tests' && report && <TestDiscoveryPanel scanId={report.id}/>}
-          {page === 'tests' && report && <TestProposalsPanel scanId={report.id}/>}
+          {page === 'tests' && report && <TestProposalsPanel scanId={report.id} runRefused={shareAckRequired}/>}
           {page === 'ai' && report && <div className="ai-workspace">
             <div className="ai-intro panel">
               <div className="ai-intro-mark"><Bot size={27}/></div>
@@ -437,7 +453,7 @@ export default function App() {
             </div>
             <div className="ai-warning"><Info size={18}/><span><strong>Security & evidence boundary:</strong> The package contains source-code diffs. Only share authorized code with Claude. Import does not prove who authored the JSON, confirm vulnerabilities, run tests, or grant approval to release.</span></div>
             {reviewList.length > 0 && <div className="panel ai-history" role="region" aria-label="Previous reviews">
-              <div className="panel-head"><div><h3>Previous reviews</h3><p>Every import is kept. A review belongs to the scan it was made for and goes stale with it.</p></div><Pill kind="muted">{reviewList.length} import{reviewList.length !== 1 ? 's' : ''}</Pill></div>
+              <div className="panel-head"><div><h3>Previous reviews</h3><p>Every AI review (model-generated or imported) is kept. A review belongs to the scan it was made for and goes stale with it.</p></div><Pill kind="muted">{reviewList.length} review{reviewList.length !== 1 ? 's' : ''}</Pill></div>
               <div className="history-table-wrap"><table className="history-table bb-table"><thead><tr><th>Imported</th><th>Scan</th><th>Suggestion</th><th>AI findings</th><th>State</th><th><span className="visually-hidden">Actions</span></th></tr></thead><tbody>
                 {reviewList.map(item => <tr key={item.id} className={shownAI?.id === item.id ? 'bb-row-open' : ''}>
                   <td>{new Date(item.imported_at).toLocaleString()}<small className="bb-muted ai-origin">{reviewOrigin(item)}</small></td>
@@ -449,21 +465,21 @@ export default function App() {
                 </tr>)}
               </tbody></table></div>
             </div>}
-            <div className="ai-report-heading"><div><h2>Imported AI review</h2><p>{shownAI && !shownIsOfThisScan ? 'From an earlier scan of this pull request. It does not describe the scan on screen.' : `Associated only with ${report.base_ref} → ${report.head_ref} · context digest verified`}</p></div>{aiReviews.length > 0 && <Pill kind="muted">{aiReviews.length} import{aiReviews.length !== 1 ? 's' : ''} for this scan</Pill>}</div>
+            <div className="ai-report-heading"><div><h2>AI review</h2><p>{shownAI && !shownIsOfThisScan ? 'From an earlier scan of this pull request. It does not describe the scan on screen.' : `Associated only with ${changeText(report.base_ref, report.head_ref, !!pullRequestBinding)} · context digest verified`}</p></div>{aiReviews.length > 0 && <Pill kind="muted">{aiReviews.length} review{aiReviews.length !== 1 ? 's' : ''} for this scan</Pill>}</div>
             {shownAI ? <>
               {shownAI.scan_binding?.stale && <div className="panel bb-state bb-warning-panel" role="alert"><AlertTriangle size={22}/><div><h3>This review is stale <StaleBadge binding={shownAI.scan_binding}/></h3><p>The pull request has new commits since the scan this review was made for (head <code>{shownAI.scan_binding.head_commit}</code>). It does not describe the current code. Scan the pull request again and review the new scan.</p></div></div>}
               <div className="panel ai-review-summary"><div className="ai-review-title"><div><Pill kind="warning">UNVERIFIED AI SUGGESTIONS</Pill><h3>{shownAI.recommendation === 'block_release' ? 'Suggested: Block release' : shownAI.recommendation === 'manual_review' ? 'Suggested: Manual review' : 'Insufficient evidence'}</h3><p>{isModelReview(shownAI) ? `Generated by ${reviewOrigin(shownAI)} · ${new Date(shownAI.imported_at).toLocaleString()} · not verified${usageText(shownAI) ? ` · ${usageText(shownAI)}` : ''}` : `Imported ${new Date(shownAI.imported_at).toLocaleString()} · Source provenance not verified`}</p></div><div className="ai-review-count"><strong>{shownAI.findings.length}</strong><span>AI findings</span></div></div><p className="ai-review-summary-text">{shownAI.summary}</p><div className="ai-verification-note"><ShieldQuestion size={16}/> No tests were executed as part of this import. This assessment cannot override the static scan, change risk score, or human review.</div></div>
               {shownAI.findings.length > 0 ? <div className="ai-findings-grid">{shownAI.findings.map((f,i) => <div className="panel ai-finding" key={`${i}-${f.title}`}><div className="ai-finding-head"><Severity level={f.severity}/><Pill kind="muted">{f.confidence} confidence</Pill>{f.id && <Pill kind="muted">{f.id}</Pill>}<Pill kind="warning">SUSPECTED · UNVERIFIED</Pill></div><h3>{f.title}</h3><p className="ai-finding-category">{f.category} · <button className="text-link" onClick={() => goFile(f.file)}>{f.file}{f.line ? `:${f.line}` : ''}<ArrowUpRight size={13}/></button></p><p>{f.rationale}</p><div className="evidence"><div className="micro-label"><Terminal size={13}/> Reported code evidence</div><code>{f.evidence}</code></div><div className="ai-advice"><Sparkles size={15}/><span>{f.recommendation}</span></div>{f.suggested_validation && <div className="ai-validation"><div className="micro-label"><FlaskConical size={13}/> How to validate (not done)</div><p>{f.suggested_validation}</p></div>}{f.proposed_patch && <div className="evidence ai-patch"><div className="micro-label"><FileDiff size={13}/> Proposed patch · unverified · not applied by ShipSafe</div><pre>{f.proposed_patch}</pre></div>}</div>)}</div> : <Empty icon={ShieldQuestion} title="No risks proposed in imported review" description="This does not establish that the code is safe. Check the review's limitations and independent testing."/>}
               <div className="ai-bottom-grid"><div className="panel ai-list-panel"><h3><FlaskConical size={18}/> Suggested regression tests <Pill kind="muted">NOT RUN</Pill></h3>{shownAI.test_ideas.map((idea,i) => <div className="ai-list-item" key={i}><strong>{idea.title}</strong><p>{idea.scenario}</p><small>Expected: {idea.expected_behavior}{idea.file ? ` · ${idea.file}` : ''}</small></div>)}{!shownAI.test_ideas.length && <p className="small-para">No test ideas provided.</p>}</div><div className="panel ai-list-panel"><h3><AlertCircle size={18}/> Review limitations</h3>{shownAI.limitations.map((item,i) => <div className="ai-limitation" key={i}><Info size={16}/><span>{item}</span></div>)}{!!shownAI.missing_context?.length && <><h3 className="ai-missing-head"><ShieldQuestion size={18}/> Context the reviewer did not have</h3>{shownAI.missing_context.map((item,i) => <div className="ai-limitation" key={`m${i}`}><Info size={16}/><span>{item}</span></div>)}</>}</div></div>
-              <div className="panel ai-compare" role="region" aria-label="Static scan and imported review">
-                <div className="panel-head"><div><h3>Static scan and imported review, side by side</h3><p>Neither column is verified. Test evidence: none. No tests were run by ShipSafe or by the review.</p></div></div>
+              <div className="panel ai-compare" role="region" aria-label="Static scan and AI review">
+                <div className="panel-head"><div><h3>Static scan and AI review, side by side</h3><p>Neither column is verified. Test evidence: none. No tests were run by ShipSafe or by the review.</p></div></div>
                 <div className="ai-compare-grid">
                   <div><div className="micro-label">STATIC SUSPICIONS · HEURISTIC SCAN</div>
                     {!shownIsOfThisScan ? <p className="muted-small">This review belongs to an earlier scan; the static findings of the scan on screen are not what it was compared with.</p>
                       : report.findings.length ? report.findings.map(item => <div className="ai-compare-item" key={item.id}><Severity level={item.severity}/><span><strong>{item.title}</strong><small>{item.file}{item.line != null ? `:${item.line}` : ''}</small></span>{raisedByReview.has(item.id) && <Pill kind="muted">Referenced by the review</Pill>}</div>)
                       : <p className="muted-small">No static pattern flagged.</p>}
                   </div>
-                  <div><div className="micro-label">IMPORTED AI FINDINGS · UNVERIFIED</div>
+                  <div><div className="micro-label">AI FINDINGS · UNVERIFIED</div>
                     {shownAI.findings.length ? shownAI.findings.map((item, index) => {
                       const related = shownIsOfThisScan ? item.related_static_finding_ids.map(id => staticTitles.get(id)).filter(Boolean) : []
                       return <div className="ai-compare-item" key={`${index}-${item.title}`}><Severity level={item.severity}/><span><strong>{item.title}</strong><small>{item.file}{item.line ? `:${item.line}` : ''}{related.length ? ` · relates to static: ${related.join('; ')}` : ''}</small></span>{!item.related_static_finding_ids.length && <Pill kind="muted">Not in the static scan</Pill>}</div>
@@ -471,9 +487,9 @@ export default function App() {
                   </div>
                 </div>
               </div>
-            </> : <div className="panel ai-empty"><div className="ai-empty-icon"><Bot size={32}/></div><h3>No Claude review imported yet</h3><p>Export this scan's handoff bundle and bring back the JSON file created in your own Claude Code session. Your Git analysis will stay intact.</p></div>}
+            </> : <div className="panel ai-empty"><div className="ai-empty-icon"><Bot size={32}/></div><h3>No AI review of this scan yet</h3><p>Export this scan's handoff bundle and bring back the JSON file created in your own Claude Code session. Your Git analysis will stay intact.</p></div>}
           </div>}
-          {page === 'history' && <div className="panel history-panel"><div className="panel-head"><div><h3>Recent analyses</h3><p>Stored in the local SQLite database</p></div><Pill kind="muted">{visibleHistory.length} saved</Pill></div><div className="history-table-wrap"><table className="history-table"><thead><tr><th>Comparison</th><th>Scanned</th><th>Files</th><th>Findings</th><th>Risk level</th><th></th></tr></thead><tbody>{visibleHistory.map(row => <tr key={row.id}><td><div className="comparison-cell"><GitPullRequest size={18}/><div><strong>{shortRef(row.head_ref)}</strong><small>{row.base_ref} → {row.head_ref}</small>{row.binding?.pull_request_id != null && <small className="bb-history-pr">Bitbucket · {row.binding.repository_id} · PR #{row.binding.pull_request_id} <StaleBadge binding={row.binding}/></small>}</div></div></td><td>{new Date(row.created_at).toLocaleString()}</td><td>{row.summary.files_changed}</td><td>{row.summary.finding_count}</td><td><Pill kind={riskColor(row.summary.risk_score)}>{row.summary.risk_score}/100</Pill></td><td><button className="table-action" onClick={() => openHistory(row.id)}>Open <ArrowRight size={14}/></button></td></tr>)}</tbody></table></div>{!visibleHistory.length && <Empty icon={History} title="No saved scans" description={live ? 'Scan a Bitbucket pull request to start building an evidence history.' : 'Run your first branch comparison to start building an evidence history.'}/>}</div>}
+          {page === 'history' && <div className="panel history-panel"><div className="panel-head"><div><h3>Recent analyses</h3><p>Stored in the local SQLite database</p></div><Pill kind="muted">{visibleHistory.length} saved{history.length >= SCAN_LIST_LIMIT ? ` · newest ${SCAN_LIST_LIMIT} shown` : ''}</Pill></div><div className="history-table-wrap"><table className="history-table"><thead><tr><th>Comparison</th><th>Scanned</th><th>Files</th><th>Findings</th><th>Risk level</th><th></th></tr></thead><tbody>{visibleHistory.map(row => <tr key={row.id}><td><div className="comparison-cell"><GitPullRequest size={18}/><div><strong>{shortRef(row.head_ref)}</strong><small>{changeText(row.base_ref, row.head_ref, row.binding?.pull_request_id != null)}</small>{row.binding?.pull_request_id != null && <small className="bb-history-pr">Bitbucket · {row.binding.repository_id} · PR #{row.binding.pull_request_id} <StaleBadge binding={row.binding}/></small>}</div></div></td><td>{new Date(row.created_at).toLocaleString()}</td><td>{row.summary.files_changed}</td><td>{row.summary.finding_count}</td><td><Pill kind={riskColor(row.summary.risk_score)}>{row.summary.risk_score}/100</Pill></td><td><button className="table-action" onClick={() => openHistory(row.id)}>Open <ArrowRight size={14}/></button></td></tr>)}</tbody></table></div>{!visibleHistory.length && <Empty icon={History} title="No saved scans" description={live ? 'Scan a Bitbucket pull request to start building an evidence history.' : 'Run your first branch comparison to start building an evidence history.'}/>}</div>}
           {page === 'settings' && <div className="settings-grid"><div className="panel settings-panel"><div className="panel-head"><div><h3>Workspace configuration</h3><p>Active development environment</p></div><Settings2 size={18}/></div><div className="settings-row"><span>Workspace name</span><strong>{live ? `Bitbucket · ${workspaceName ?? 'unknown'}` : 'ShipSafe Demo'}</strong></div><div className="settings-row"><span>{live ? 'Approved repositories' : 'Repository'}</span><strong className="mono smaller">{live ? (bitbucketStatus.data?.repositories.join(', ') || 'None') : demo?.repository_path || 'Not connected'}</strong></div><div className="settings-row"><span>Default base</span><strong className="mono">{live ? 'PR destination' : 'main'}</strong></div><div className="settings-row"><span>Scanning mode</span><Pill kind="demo">Read-only</Pill></div><div className="settings-row"><span>Data storage</span><strong>Local SQLite</strong></div><div className="settings-row"><span>Test runner</span><Pill kind="warning">Not enabled</Pill></div><div className="settings-row"><span>AI handoff</span><Pill kind="demo">Claude manual · no API key</Pill></div><div className="settings-row"><span>AI review models</span>{configuredProviders.length ? <span className="ai-provider-pills">{configuredProviders.map(item => <Pill key={item.provider} kind="good">{item.label} · {item.model}</Pill>)}</span> : <Pill kind="muted">Not configured</Pill>}</div></div><div className="panel settings-panel"><div className="panel-head"><div><h3>Security boundaries</h3><p>Designed for local, authorized source code</p></div><LockKeyhole size={19}/></div><div className="safe-rule"><CheckCircle2 size={17}/><span>Git commands use argument arrays, never shell interpolation.</span></div><div className="safe-rule"><CheckCircle2 size={17}/><span>Default allowlist includes only the generated synthetic repository.</span></div><div className="safe-rule"><CheckCircle2 size={17}/><span>Scans and JSON imports never execute repository code.</span></div><div className="safe-rule"><CheckCircle2 size={17}/><span>Reports make no claim that suspected vulnerabilities were verified.</span></div><div className="settings-explain">To scan an explicitly approved local repository, set <code>SHIPSAFE_ALLOWED_ROOT</code> in the backend environment and provide its path through the API. Don't grant broad access to untrusted directories.</div></div></div>}
         </>}
         <footer className="app-footer"><span><Logo size={22}/> ShipSafe <b>v0.2</b></span><span>Evidence-first release intelligence · {pullRequestBinding ? `Bitbucket · ${pullRequestBinding.repository_id}` : live ? `Bitbucket · ${workspaceName ?? 'not configured'}` : 'Synthetic demo repository'}</span></footer>

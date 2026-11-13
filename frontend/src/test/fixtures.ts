@@ -32,7 +32,7 @@ export const demoHistory = (): ScanHistory[] => {
 /** The answers the dashboard needs to start in the local demo. */
 export const demoRoutes = () => ({
   '/api/demo': { body: demoInfo() },
-  '/api/scans': { body: demoHistory() },
+  '/api/scans?limit=100': { body: demoHistory() },
   [`/api/scans/${report.id}`]: { body: demoReport() },
   [`/api/scans/${report.id}/ai/reviews`]: { body: [] },
 })

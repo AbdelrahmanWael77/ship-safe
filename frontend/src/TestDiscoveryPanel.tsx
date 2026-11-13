@@ -3,6 +3,7 @@
 // them by parsing test files; nothing is collected or run, and this panel
 // never says otherwise.
 import { AlertCircle, FlaskConical, RefreshCw, SearchCode } from 'lucide-react'
+import { useRef } from 'react'
 import { api } from './api'
 import { useLoad } from './bitbucket/useLoad'
 import { Pill } from './components'
@@ -13,8 +14,21 @@ const reasonText = (reason: TestDiscovery['candidates'][number]['reasons'][numbe
     ? `mentions changed function ${reason.function}() of ${reason.changed_file}`
     : `its file imports ${reason.changed_file}`
 
+// One discovery per scan for this page load: it reads up to 60 test files from Bitbucket, so
+// coming back to the page reuses the answer. Refresh (and Retry) always ask the API again.
+const cache = new Map<string, TestDiscovery>()
+/** Tests only: forget every cached discovery. */
+export const clearDiscoveryCache = () => cache.clear()
+
 export function TestDiscoveryPanel({ scanId }: { scanId: string }) {
-  const discovery = useLoad(() => api<TestDiscovery>(`/api/scans/${scanId}/tests/discovery`), `test-discovery:${scanId}`)
+  const force = useRef(false)
+  const discovery = useLoad(() => {
+    const hit = cache.get(scanId)
+    if (hit && !force.current) return Promise.resolve(hit)
+    force.current = false
+    return api<TestDiscovery>(`/api/scans/${scanId}/tests/discovery`).then(answer => { cache.set(scanId, answer); return answer })
+  }, `test-discovery:${scanId}`)
+  const refresh = () => { force.current = true; discovery.reload() }
   // While another scan is loading, the previous answer must not be shown as if it were the new one.
   const found = discovery.data && discovery.data.scan_id === scanId ? discovery.data : null
 
@@ -25,17 +39,17 @@ export function TestDiscoveryPanel({ scanId }: { scanId: string }) {
           <h3><SearchCode size={17} /> Existing tests that may exercise this change <Pill kind="warning">NOT RUN</Pill></h3>
           <p>Found by reading test files at the scanned commit. Nothing was collected or executed; a listed test is not known to cover the change.</p>
         </div>
-        <button className="secondary-button" onClick={discovery.reload} disabled={discovery.loading}>
+        <button className="secondary-button" onClick={refresh} disabled={discovery.loading}>
           <RefreshCw size={15} className={discovery.loading ? 'spin' : ''} /> Refresh
         </button>
       </div>
 
-      {discovery.loading && !found && <div className="bb-state" role="status"><div className="spinner bb-spinner" /><div><h3>Looking for existing tests…</h3></div></div>}
+      {discovery.loading && !found && <div className="bb-state" role="status"><div className="spinner bb-spinner" /><div><h3>Looking for existing tests…</h3><p>Reading test files at the scanned commit. For a Bitbucket pull request this can take 10–30 seconds.</p></div></div>}
       {discovery.error && (
         <div className="bb-state bb-error" role="alert">
           <AlertCircle size={22} />
           <div><h3>Could not discover tests</h3><p className="bb-error-message">{discovery.error.message}</p></div>
-          <button className="secondary-button" onClick={discovery.reload}><RefreshCw size={15} /> Retry</button>
+          <button className="secondary-button" onClick={refresh}><RefreshCw size={15} /> Retry</button>
         </div>
       )}
 
@@ -47,13 +61,13 @@ export function TestDiscoveryPanel({ scanId }: { scanId: string }) {
           <p className="bb-footnote" role="note">
             Incomplete discovery.
             {found.test_files_unread > 0 && <> {found.test_files_unread} test {found.test_files_unread === 1 ? 'file was' : 'files were'} not read (limit reached).</>}
-            {found.unparsed_test_files.length > 0 && <> Could not be parsed: {found.unparsed_test_files.join(', ')}.</>}
+            {found.unparsed_test_files.length > 0 && <> Could not be read or parsed: {found.unparsed_test_files.join(', ')}.</>}
             {found.candidate_count > found.candidates.length && <> Only the first {found.candidates.length} candidates are listed.</>}
           </p>
         )}
 
         {found.candidates.length === 0 ? (
-          <div className="empty-state"><h3>No existing test was matched to this change</h3><p>{found.tests_found === 0 ? 'No pytest test was found at this commit.' : 'No discovered test file imports a changed module.'} That is a gap in coverage, not a sign of safety.</p></div>
+          <div className="empty-state"><h3>No existing test was matched to this change</h3><p>{found.tests_found === 0 ? 'No test file was found at this commit (Python test_*.py / *_test.py, Dart *_test.dart).' : 'No discovered test file imports a changed module.'} That is a gap in coverage, not a sign of safety.</p></div>
         ) : (
           <div className="history-table-wrap">
             <table className="history-table bb-table">
@@ -66,7 +80,7 @@ export function TestDiscoveryPanel({ scanId }: { scanId: string }) {
                     <td>
                       {item.related_static_finding_ids.length + item.related_ai_finding_ids.length === 0 ? <span className="bb-muted">None</span> : <>
                         {item.related_static_finding_ids.length > 0 && <span className="discovery-related">{item.related_static_finding_ids.length} static</span>}
-                        {item.related_ai_finding_ids.length > 0 && <span className="discovery-related">{item.related_ai_finding_ids.length} imported AI (unverified)</span>}
+                        {item.related_ai_finding_ids.length > 0 && <span className="discovery-related">{item.related_ai_finding_ids.length} AI (unverified)</span>}
                       </>}
                     </td>
                     <td><Pill kind="muted">Suggested · not run</Pill></td>

@@ -1,4 +1,4 @@
-import type { AIProvider, BitbucketStatus } from '../types'
+import type { AIProvider, BitbucketStatus, Report } from '../types'
 import type { BitbucketNavigate, BitbucketPage, BitbucketSelection } from './pages'
 import { bitbucketPageLabel } from './pages'
 import { PrAnalysisPage } from './PrAnalysisPage'
@@ -13,13 +13,15 @@ const DESCRIPTIONS: Record<BitbucketPage, string> = {
 }
 
 /** The Bitbucket part of the dashboard: heading plus the current Bitbucket page. */
-export function BitbucketSection({ page, status, selection, navigate, onScanned, onOpenReport, providers = null }: {
+export function BitbucketSection({ page, status, selection, navigate, onScanned, onOpenReport, providers = null, onShown, onReviewed }: {
   page: BitbucketPage
   status: Loaded<BitbucketStatus>
   selection: BitbucketSelection
   navigate: BitbucketNavigate
   onScanned: () => void
   onOpenReport: (id: string, page?: 'findings' | 'tests') => void
+  onShown?: (report: Report) => void
+  onReviewed?: (scanId: string) => void
   providers?: AIProvider[] | null
 }) {
   return (
@@ -30,7 +32,7 @@ export function BitbucketSection({ page, status, selection, navigate, onScanned,
       </div>
       {page === 'repositories' && <RepositoriesPage status={status} />}
       {page === 'pull-requests' && <PullRequestsPage status={status} selection={selection} navigate={navigate} />}
-      {page === 'pr-analysis' && <PrAnalysisPage status={status} selection={selection} navigate={navigate} onScanned={onScanned} onOpenReport={onOpenReport} providers={providers} />}
+      {page === 'pr-analysis' && <PrAnalysisPage status={status} selection={selection} navigate={navigate} onScanned={onScanned} onOpenReport={onOpenReport} providers={providers} onShown={onShown} onReviewed={onReviewed} />}
     </section>
   )
 }

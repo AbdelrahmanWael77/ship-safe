@@ -38,7 +38,7 @@ describe('existing demo dashboard', () => {
     expect(screen.getByText(report.head_sha)).toBeVisible()
     expect(screen.getByText('Requires engineering review')).toBeVisible()  // finding_count > 0
     expect(screen.getByText(report.summary.recommendation)).toBeVisible()
-    expect(api.calls).toEqual(expect.arrayContaining(['/api/demo', '/api/scans', `/api/scans/${report.id}`]))
+    expect(api.calls).toEqual(expect.arrayContaining(['/api/demo', '/api/scans?limit=100', `/api/scans/${report.id}`]))
   })
 
   test('the sidebar switches between the existing pages', async () => {
@@ -78,7 +78,7 @@ describe('existing demo dashboard', () => {
 
 describe('live mode (Bitbucket configured): no synthetic demo data', () => {
   test('the demo is never requested and no demo scan is created', async () => {
-    const api = await startLive({ '/api/scans': { body: [] } })
+    const api = await startLive({ '/api/scans?limit=100': { body: [] } })
     expect(api.calls).not.toContain('/api/demo')
     expect(api.count('POST /api/scans')).toBe(0)
     expect(screen.queryByText('LOCAL DEMO')).not.toBeInTheDocument()
@@ -187,25 +187,44 @@ describe('pull requests in the dashboard', () => {
   const configured = () => ({ [STATUS]: { body: statusConfigured() }, [REPOS]: { body: repositories() }, [LIST]: { body: pullRequestsBeforeScan() }, [DETAIL]: { body: pullRequestDetail() } })
 
   test('repository → pull request → scan → report; the history is refreshed and the selection survives leaving', async () => {
-    const api = await startLive({ ...configured(), [`POST ${DETAIL}/scans`]: { status: 201, body: pullRequestScanReport() } })
+    const scanned = pullRequestScanReport()
+    const api = await startLive({ ...configured(), [`POST ${DETAIL}/scans`]: { status: 201, body: scanned },
+      [`/api/scans/${scanned.id}/ai/reviews`]: { body: [] } })
     const user = userEvent.setup()
     await user.click(bitbucketNav().getByRole('button', { name: 'Pull requests' }))
     await user.click(await screen.findByRole('button', { name: /Analyze pull request 7/ }))
 
     expect(document.querySelector('.topbar-left strong')).toHaveTextContent('PR analysis')
     expect(bitbucketNav().getByRole('button', { name: 'Pull requests' })).toHaveClass('active')
-    const historyCalls = api.count('/api/scans')
+    const historyCalls = api.count('/api/scans?limit=100')
     await user.click(await screen.findByRole('button', { name: /Scan this pull request/ }))
     expect(await screen.findByRole('region', { name: 'Scan report' })).toBeVisible()
-    expect(api.count('/api/scans')).toBe(historyCalls + 1)
+    expect(api.count('/api/scans?limit=100')).toBe(historyCalls + 1)
 
     await user.click(within(screen.getByRole('region', { name: 'Bitbucket' })).getByRole('button', { name: 'Pull requests' }))
     expect(await screen.findByText('#7 Change 7')).toBeVisible()
     expect(document.querySelector('.alert-error')).toBeNull()
   })
 
+  test('a scan made on PR analysis becomes the scan of every dashboard page (no older scan is shown there)', async () => {
+    const scanned = pullRequestScanReport()
+    const api = await startLive({ ...configured(), [`POST ${DETAIL}/scans`]: { status: 201, body: scanned },
+      [`/api/scans/${scanned.id}/ai/reviews`]: { body: [] }, [`/api/scans/${scanned.id}/tests/discovery`]: { status: 503, body: { detail: 'not in this test' } },
+      [`/api/scans/${scanned.id}/tests/proposals`]: { body: [] } })
+    const user = userEvent.setup()
+    await user.click(bitbucketNav().getByRole('button', { name: 'Pull requests' }))
+    await user.click(await screen.findByRole('button', { name: /Analyze pull request 7/ }))
+    await user.click(await screen.findByRole('button', { name: /Scan this pull request/ }))
+    expect(await screen.findByRole('region', { name: 'Scan report' })).toBeVisible()
+    await user.click(primaryNav().getByRole('button', { name: /Test intelligence/ }))
+    await screen.findByRole('heading', { name: 'Test intelligence' })
+    expect(api.calls).toContain(`/api/scans/${scanned.id}/tests/discovery`)
+    await user.click(primaryNav().getByRole('button', { name: /Overview/ }))
+    expect(screen.getByRole('region', { name: 'Scan source' })).toHaveTextContent('#7')
+  })
+
   test('the scan history marks a pull request scan and never shows it as current', async () => {
-    await start({ ...configured(), '/api/scans': { body: [...demoHistory(), pullRequestHistoryItem()] }, [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
+    await start({ ...configured(), '/api/scans?limit=100': { body: [...demoHistory(), pullRequestHistoryItem()] }, [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
     await userEvent.click(primaryNav().getByRole('button', { name: /Scan history/ }))
     const row = (await screen.findByText(/Bitbucket · acme\/ledger · PR #7/)).closest('tr') as HTMLElement
     expect(row.querySelector('[data-stale]')).toHaveAttribute('data-stale', 'unchecked')
@@ -224,7 +243,7 @@ describe('pull requests in the dashboard', () => {
   })
 
   test('a Bitbucket pull request scan is never labelled as the local demo; it shows its repository, PR and commits', async () => {
-    await start({ ...configured(), '/api/scans': { body: [pullRequestHistoryItem(), ...demoHistory()] }, [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
+    await start({ ...configured(), '/api/scans?limit=100': { body: [pullRequestHistoryItem(), ...demoHistory()] }, [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
     expect(screen.queryByText('LOCAL DEMO')).not.toBeInTheDocument()
     expect(screen.queryByText('LIVE DEMO')).not.toBeInTheDocument()
     expect(screen.queryByText(/LedgerLite/)).not.toBeInTheDocument()
@@ -244,8 +263,15 @@ describe('pull requests in the dashboard', () => {
     expect(await screen.findByRole('heading', { name: /#7 Change 7/ })).toBeVisible()
   })
 
+  test('Scan history writes a pull request as source → target, like Bitbucket and the pull request list', async () => {
+    const item = pullRequestHistoryItem()
+    await start({ ...configured(), '/api/scans?limit=100': { body: [item] }, [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
+    await userEvent.click(primaryNav().getByRole('button', { name: /Scan history/ }))
+    expect(await screen.findByText(`${item.head_ref} → ${item.base_ref}`)).toBeVisible()
+  })
+
   test('the latest pull request scan opens at start even when a newer demo scan is stored; demo rows are not listed', async () => {
-    const api = await start({ ...configured(), '/api/scans': { body: [...demoHistory(), pullRequestHistoryItem()] }, [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
+    const api = await start({ ...configured(), '/api/scans?limit=100': { body: [...demoHistory(), pullRequestHistoryItem()] }, [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
     expect(screen.getByRole('region', { name: 'Scan source' })).toBeVisible()
     expect(api.calls).not.toContain(`/api/scans/${report.id}`)
     await userEvent.click(primaryNav().getByRole('button', { name: /Scan history/ }))
@@ -377,7 +403,7 @@ describe('Claude Review page: history, side by side, import status', () => {
     return api
   }
   const history = () => within(screen.getByRole('region', { name: 'Previous reviews' }))
-  const compare = () => within(screen.getByRole('region', { name: 'Static scan and imported review' }))
+  const compare = () => within(screen.getByRole('region', { name: 'Static scan and AI review' }))
 
   test('previous reviews list every import; the newest review of this scan is shown by default', async () => {
     await openPage({ [reviews]: { body: [base()] }, [`${reviews}/history`]: { body: [{ ...base(), current_scan: true }, earlier()] } })
@@ -408,7 +434,7 @@ describe('Claude Review page: history, side by side, import status', () => {
 
   test('reviews of earlier scans are listed but never shown by default when this scan has none', async () => {
     await openPage({ [`${reviews}/history`]: { body: [earlier()] } })
-    expect(await screen.findByRole('heading', { name: 'No Claude review imported yet' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'No AI review of this scan yet' })).toBeVisible()
     expect(history().getAllByRole('row').slice(1)).toHaveLength(1)
     expect(screen.queryByRole('heading', { name: 'Finding from the earlier scan' })).not.toBeInTheDocument()
   })
@@ -425,7 +451,7 @@ describe('Claude Review page: history, side by side, import status', () => {
     await screen.findByRole('heading', { name: 'Linked AI finding' })
     const panel = compare()
     expect(panel.getByText('STATIC SUSPICIONS · HEURISTIC SCAN')).toBeVisible()
-    expect(panel.getByText('IMPORTED AI FINDINGS · UNVERIFIED')).toBeVisible()
+    expect(panel.getByText('AI FINDINGS · UNVERIFIED')).toBeVisible()
     expect(panel.getByText(/Test evidence: none/)).toBeVisible()
     for (const finding of report.findings) expect(panel.getByText(finding.title)).toBeVisible()
     expect(panel.getAllByText('Referenced by the review')).toHaveLength(1)
@@ -448,7 +474,7 @@ describe('Claude Review page: history, side by side, import status', () => {
 
   test('a successful import is confirmed next to the control and joins the history', async () => {
     const api = await openPage({ [`POST ${reviews}`]: { status: 201, body: base() } })
-    await screen.findByRole('heading', { name: 'No Claude review imported yet' })
+    await screen.findByRole('heading', { name: 'No AI review of this scan yet' })
     await chooseFile(JSON.stringify({ any: 'json' }))
 
     const status = await screen.findByRole('status')
@@ -462,7 +488,7 @@ describe('Claude Review page: history, side by side, import status', () => {
 
   test('the same file can be chosen again after an import (for example to retry it)', async () => {
     const api = await openPage({ [`POST ${reviews}`]: [{ status: 201, body: base() }, { status: 409, body: { detail: 'This review was already imported for this scan. Nothing was added.' } }] })
-    await screen.findByRole('heading', { name: 'No Claude review imported yet' })
+    await screen.findByRole('heading', { name: 'No AI review of this scan yet' })
     const file = new File([JSON.stringify({ any: 'json' })], 'claude-review.json', { type: 'application/json' })
     const input = () => document.querySelector('input[type="file"]') as HTMLInputElement
     await userEvent.upload(input(), file)
@@ -484,20 +510,20 @@ describe('Claude Review page: history, side by side, import status', () => {
     [422, 'Invalid Claude review JSON: 1 validation error'],
   ])('a rejected import (%i) shows the API’s reason next to the control and adds nothing', async (status, detail) => {
     await openPage({ [`POST ${reviews}`]: { status, body: { detail } } })
-    await screen.findByRole('heading', { name: 'No Claude review imported yet' })
+    await screen.findByRole('heading', { name: 'No AI review of this scan yet' })
     await chooseFile('{}')
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(`Not imported: ${detail}`)
     expect(alert.closest('.ai-step')).not.toBeNull()
-    expect(screen.getByRole('heading', { name: 'No Claude review imported yet' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'No AI review of this scan yet' })).toBeVisible()
     expect(screen.queryByRole('region', { name: 'Previous reviews' })).not.toBeInTheDocument()
     expect(document.querySelector('.alert-error')).toBeNull()
   })
 
   test('a file over 256 KiB is refused without a request', async () => {
     const api = await openPage({})
-    await screen.findByRole('heading', { name: 'No Claude review imported yet' })
+    await screen.findByRole('heading', { name: 'No AI review of this scan yet' })
     await chooseFile('x'.repeat(256 * 1024 + 1))
     expect(await screen.findByRole('alert')).toHaveTextContent(/too large/)
     expect(api.count(`POST ${reviews}`)).toBe(0)
@@ -574,7 +600,7 @@ describe('AI model review panel (Claude Review page)', () => {
     await openReview()
     await userEvent.click(await panel().findByRole('button', { name: /Run OpenAI review/ }))
     expect(await panel().findByRole('alert')).toHaveTextContent('OpenAI review failed: OpenAI rejected the server\'s API key.')
-    expect(screen.getByRole('heading', { name: 'No Claude review imported yet' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'No AI review of this scan yet' })).toBeVisible()
     expect(document.querySelector('.alert-error')).toBeNull()
   })
 
@@ -649,6 +675,13 @@ describe('AI review results on Risk findings and Test intelligence', () => {
     expect(screen.queryByText(/manually imported/)).not.toBeInTheDocument()
   })
 
+  test('Release readiness shows the AI review verdict beside the static score, without changing the score', async () => {
+    await start({ [reviews]: { body: [aiReview()] } })
+    const line = (await screen.findByText(/Not included in this score/)).closest('p')
+    expect(line).toHaveTextContent('AI review (Claude import, unverified): suggests Block release · 1 critical. Not included in this score.')
+    expect(document.querySelector('.progress-number')).toHaveTextContent(String(report.summary.risk_score))
+  })
+
   test('Overview calls an imported review a manual Claude Code import', async () => {
     await start({ [reviews]: { body: [aiReview()] } })
     expect(await screen.findByText('A manually imported Claude Code review is available (1 proposed finding, unverified).')).toBeVisible()
@@ -666,7 +699,7 @@ describe('AI review results on Risk findings and Test intelligence', () => {
   test('Test intelligence says Run exists but execution is blocked, not "planned"', async () => {
     await start()
     await go(/Test intelligence/)
-    expect(await screen.findByText(/execution is currently blocked: ShipSafe has no verified isolated runner/)).toBeVisible()
+    expect(await screen.findByText(/no test is ever executed: ShipSafe has no verified isolated runner/)).toBeVisible()
     expect(screen.queryByText(/planned for the next phase/)).not.toBeInTheDocument()
   })
 

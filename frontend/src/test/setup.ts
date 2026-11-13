@@ -2,6 +2,7 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/react'
 import { afterEach } from 'vitest'
+import { clearDiscoveryCache } from '../TestDiscoveryPanel'
 
 // jsdom has no Blob.text(), which every supported browser has and the review
 // import uses. Test environment only; nothing here ships in the bundle.
@@ -17,4 +18,4 @@ if (typeof Blob.prototype.text !== 'function') {
 }
 
 // Vitest globals are off, so Testing Library cannot register this itself.
-afterEach(() => cleanup())
+afterEach(() => { cleanup(); clearDiscoveryCache() })

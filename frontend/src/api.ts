@@ -9,6 +9,10 @@
 
 /** Base URL of the API; empty in development, where Vite proxies /api. */
 export const API_BASE = import.meta.env.VITE_API_BASE || ''
+/** The scan list as the dashboard asks for it: the newest 100 scans (the API's maximum; its default is 12). */
+export const SCAN_LIST_PATH = '/api/scans?limit=100'
+/** How many scans SCAN_LIST_PATH can return at most. */
+export const SCAN_LIST_LIMIT = 100
 const API = API_BASE
 
 export class ApiError extends Error {

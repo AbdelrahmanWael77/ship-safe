@@ -182,7 +182,9 @@ def render_markdown(assessment: dict) -> str:
     if identity["pull_request_id"] is not None:
         lines.append(f"- Pull request: {_cell(identity['pull_request_id'])}")
     lines += [
-        f"- Change: {_cell(identity['base_ref'])} -> {_cell(identity['head_ref'])} ({_cell(identity['comparison'])})",
+        (f"- Change: {_cell(identity['head_ref'])} -> {_cell(identity['base_ref'])} "
+         f"(pull request source -> target, {_cell(identity['comparison'])})" if identity.get("pull_request_id") is not None
+         else f"- Change: {_cell(identity['base_ref'])} -> {_cell(identity['head_ref'])} ({_cell(identity['comparison'])})"),
         f"- Base commit: {_cell(identity['base_commit']) or 'not recorded'}",
         f"- Head commit: {_cell(identity['head_commit']) or 'not recorded'}",
         f"- Stale: {'yes, since ' + _cell(identity['stale_at']) if identity['stale'] else 'not known to be stale'}",

@@ -178,6 +178,19 @@ describe('proposed tests', () => {
   })
 })
 
+describe('proposed tests of a repository other than the demo', () => {
+  test('Run is not offered: the text says runs are only for the demo repository, and no run is requested', async () => {
+    const api = stubApi({ [URL]: { body: [approved()] }, [`${URL}/${approved().id}/runs`]: { body: [] } })
+    render(<TestProposalsPanel scanId={SCAN} runRefused />)
+    const item = within(await screen.findByRole('article', { name: `Proposal ${approved().target_path}` }))
+    await userEvent.type(item.getByRole('textbox', { name: /Your name/ }), 'QC Test')
+    expect(item.getByRole('button', { name: /Run/ })).toBeDisabled()
+    expect(item.getByText(/Run is not available for this repository/)).toBeVisible()
+    expect(item.queryByText(/would be allowed to run once one is/)).not.toBeInTheDocument()
+    expect(api.calls.some(call => call.startsWith('POST'))).toBe(false)
+  })
+})
+
 describe('Test intelligence page', () => {
   test('shows the proposals of the scan on screen and never a working Run control', async () => {
     const report = demoReport()

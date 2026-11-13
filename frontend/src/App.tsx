@@ -11,6 +11,7 @@ import {
   Shield, ShieldAlert, ShieldCheck, ShieldQuestion, UploadCloud, Bot, FileArchive, SlidersHorizontal,
   Sparkles, Terminal, TrendingUp, X, Zap,
 } from 'lucide-react'
+import { api, API_BASE as API } from './api'
 import type { AIReview, DemoInfo, FileChange, Finding, Report, ScanHistory } from './types'
 
 type Page = 'overview' | 'changes' | 'findings' | 'tests' | 'ai' | 'history' | 'settings'
@@ -23,39 +24,6 @@ const NAV: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'history', label: 'Scan history', icon: History },
   { id: 'settings', label: 'Configuration', icon: Settings2 },
 ]
-const API = import.meta.env.VITE_API_BASE || ''
-
-// FastAPI returns `detail` as a string for handled errors and as a list of
-// {loc, msg} objects for request-validation (422) errors.
-function describeError(detail: unknown, status: number): string {
-  if (typeof detail === 'string' && detail) return detail
-  if (Array.isArray(detail)) {
-    const parts = detail.map(item => {
-      if (item && typeof item === 'object' && 'msg' in item) {
-        const loc = Array.isArray((item as { loc?: unknown }).loc) ? ((item as { loc: unknown[] }).loc).filter(part => part !== 'body').join('.') : ''
-        return loc ? `${loc}: ${String((item as { msg: unknown }).msg)}` : String((item as { msg: unknown }).msg)
-      }
-      return String(item)
-    })
-    if (parts.length) return `Invalid request: ${parts.join('; ')}`
-  }
-  return `API error ${status}`
-}
-
-async function api<T>(path: string, options?: RequestInit): Promise<T> {
-  let response: Response
-  try {
-    response = await fetch(API + path, options)
-  } catch {
-    throw new Error('Could not reach the API. Start FastAPI on port 8000, then refresh this page.')
-  }
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({ detail: response.statusText }))
-    throw new Error(describeError(data?.detail, response.status))
-  }
-  return response.json() as Promise<T>
-}
-
 const relative = (date: string) => {
   const seconds = Math.round((Date.now() - new Date(date).getTime()) / 1000)
   if (seconds < 60) return 'Just now'

@@ -10,7 +10,7 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 - **Branch / latest commit:** (remote state verified with `git ls-remote origin` on 2026-11-13)
   - GitHub has **no `main` branch**. The default and integration branch is `feat/p1-foundation`, at `98c9d92`, which is the merge of pull request #1 (`feat/p2-bitbucket-provider`, P2 task 1). The rule files name it accordingly.
   - On GitHub, stacked on `08b3b1b`, none merged: `feat/p2-bitbucket-settings` (`ebc9068`, task 2) → `feat/p2-migration-2` (`82d14ed`, task 3) → `feat/p2-bitbucket-api` (`790b293`, task 4). Pushed by the owner on 2026-11-12.
-  - `feat/p2-frontend-screens`, cut from `790b293` — P2 task 5, in progress. **Local only, not pushed.** Milestone 1 (frontend toolchain and test setup, `1851b6f`) and milestone 2 (`truncated` flag on the pull request list, branch head) are committed; no frontend screen work yet.
+  - `feat/p2-frontend-screens`, cut from `790b293` — P2 task 5, in progress. **Local only, not pushed.** Milestone 1 (frontend toolchain and test setup, `1851b6f`) and milestone 2 (`truncated` flag on the pull request list, `3bf1fbd`) and milestone 3 (types, API helper, stale logic and badge, branch head) are committed; no Bitbucket screen exists yet.
 
 ### Completed and verified
 - Baseline v0.2 ("Phase 0") — imported as `10f3cee`.
@@ -29,7 +29,8 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 5. [ ] Frontend: Repositories, Pull Requests, PR Analysis screens with typed client (**in progress**)
    - [x] Milestone 1: toolchain (Vite 6.4.6, Vitest 5.1.0, Testing Library), `npm test`, smoke test of the demo dashboard
    - [x] Milestone 2: `truncated` flag on the pull request list (approved backend change), 7 new backend tests
-   - [ ] Types, API helper, stale logic; Repositories, Pull Requests, PR Analysis screens; integration with existing pages; development mock mode; docs
+   - [x] Milestone 3: typed contracts (`types.ts`), API helper with `ApiError` (`api.ts`), stale logic and `StaleBadge` (`bitbucket/`), 32 new frontend tests
+   - [ ] Navigation and Bitbucket connection status; Repositories, Pull Requests, PR Analysis screens; integration with existing pages; development mock mode; docs
 6. [ ] Human-run read-only live smoke test (PASS or BLOCKED), docs, gates
 
 ### Current working state
@@ -68,6 +69,10 @@ Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
   - `cd backend && python -m pytest -q` → 229 passed (unchanged; only an error message in `scripts/dev.py` changed outside the frontend).
   - **Not verified:** Node 20 (unsupported from now on), `vite preview`.
   - **OUTSTANDING — Windows verification of the toolchain milestone (`1851b6f`): NOT TESTED.** The agent session could not run commands on the owner's machine. To do, in `frontend` on Windows with Node 22.12+ or 24+: `npm ci`, `npm test` (expect 2 passed), `npm run build`, `npm audit` (expect 0); then `python scripts\dev.py` and a walk through the demo.
+- **Milestone 3 — types, API helper, stale logic (2026-11-13, Linux cloud container, Node 22.23.4):**
+  - `cd frontend && npm test` → 34 passed (3 files); `npm run build` → ✓ built (200.48 kB JS); `npm audit` → 0
+  - Scripted headless-browser run of the demo: identical to the Vite 5 baseline (the API helper was moved out of `App.tsx`; the smoke test and the type check caught a missed `API` reference before commit)
+  - Not run on Windows.
 - **`truncated` milestone (2026-11-13, Linux cloud container, Python 3.13.18):**
   - `cd backend && python -m pytest -q tests/test_bitbucket_api.py tests/test_bitbucket_provider.py` → 86 passed (45 + 41)
   - `cd backend && python -m pytest -q` → 236 passed, 1 warning (229 + 7 new)

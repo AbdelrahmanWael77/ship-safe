@@ -1,0 +1,5 @@
+/* Styles for the Bitbucket screens (Phase 2 task 5). Kept apart from
+   styles.css, which is not edited. Colours follow the existing dark theme. */
+
+.visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);clip-path:inset(50%);white-space:nowrap;border:0}
+.stale-badge{cursor:help}

@@ -179,6 +179,14 @@ A single component file, `App.tsx`, with `useState` page switching and no router
 
 The UI can only choose among the demo repository's branches. Scanning another authorized repository is possible through the API but has no UI.
 
+Supporting modules (Phase 2 task 5, in progress; no Bitbucket screen exists yet):
+
+- `api.ts` — `api<T>()`, `describeError`, `API_BASE`, moved out of `App.tsx` with the same behaviour, plus `ApiError` (`status`, `code`) and `isApiError(error, code?)`. `status` is 0 when the API cannot be reached.
+- `types.ts` — the Bitbucket contract types (`Binding`, `BitbucketStatus`, `BitbucketRepository`, `PullRequest`, `PullRequestListItem`, `PullRequestList`, `PullRequestDetail`, `PullRequestScan`), optional `binding` on `Report` and `ScanHistory`, and the two optional import-truncation summary keys.
+- `bitbucket/stale.ts` — `staleStatus(binding)` and `staleDisplay(binding)`: the single place that turns `stale` + `stale_checked` into Current, Stale, or Not checked. A scan is called Current only when the response that carried it was checked.
+- `bitbucket/StaleBadge.tsx` — the badge; renders nothing for scans that stale does not apply to (local scans, reports without a binding).
+- `bitbucket.css` — styles for the Bitbucket screens; `styles.css` is not edited.
+
 ## Demo generator and settings
 
 `demo_seed.ensure_demo_repo()` runs at API startup. It writes the LedgerLite files, commits them on `main`, and creates six branches, each one commit on top of `main`: `feature/release-candidate`, `feature/auth-regression`, `feature/pricing-regression`, `feature/api-breaking`, `feature/docs-only`, `feature/safe-cleanup`. It is idempotent: a complete repository is left untouched, and a branch that is missing or has no commit of its own (a seed interrupted part way) is rebuilt from `main`. Repair never discards work: if a tracked file carries an uncommitted change that the seeder itself did not write, startup fails with a `ConfigError` naming the file; untracked files are neither removed nor committed (only the demo's own files are ever `git add`ed). It refuses, with `ConfigError`, to touch a non-empty directory that is not a repository or a repository it did not generate; a generated repository is recognised by the `shipsafe.demo=true` marker in its config, or, for repositories seeded before the marker existed, by the root commit's subject *and* synthetic author e-mail. Demo commits are made with `commit.gpgsign=false` in the repository's own config. These are the only Git writes ShipSafe ever makes, and only inside the demo directory. `GET /api/demo` serves `DEMO_BRANCHES` as the branch picker's data.
@@ -200,7 +208,7 @@ Backend only, under `backend/tests` (236 tests on 2026-11-13). Each test builds 
 | `test_migration_2.py` | 17 | P2 task 3: schema version 2, row preservation, rollback, `insert_scan`, `sync_stale` |
 | `test_bitbucket_api.py` | 45 | P2 task 4: Bitbucket routes end to end over mocked HTTP, merge-base comparison, stale marking and `stale_checked`, error mapping, import-analysis bound, report-shape guard, example-file drift guard |
 
-Frontend: `frontend/src/App.test.tsx` (2 tests, `npm test`) is a smoke test of the existing demo dashboard with `fetch` stubbed; it uses `docs/example-scan-report.json` as its fixture. There is no lint step. The dashboard has also been exercised in headless Chrome by throwaway scripts (recorded in the session handoff: all six demo branches, export and ZIP per scan; re-run on 2026-11-13 against Vite 5 and Vite 6 with identical results); those scripts are not part of the repository.
+Frontend (`npm test`, 34 tests on 2026-11-13, all in jsdom with `fetch` stubbed): `App.test.tsx` (2) is a smoke test of the existing demo dashboard using `docs/example-scan-report.json`; `api.test.ts` (15) covers the API helper and `ApiError`; `bitbucket/stale.test.tsx` (17) covers the stale logic and badge, including against `docs/example-bitbucket-responses.json`. There is no lint step. The dashboard has also been exercised in headless Chrome by throwaway scripts (recorded in the session handoff: all six demo branches, export and ZIP per scan; re-run on 2026-11-13 against Vite 5 and Vite 6 with identical results); those scripts are not part of the repository.
 
 ## Phase 2 dependency points
 

@@ -95,3 +95,15 @@
 .ai-compare-item>span{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;color:#dbe7f5}
 .ai-compare-item small{color:#8194af;font-size:10.5px;word-break:break-word}
 @media(max-width:900px){.ai-compare-grid{grid-template-columns:1fr}}
+.discovery-panel{margin-top:17px}
+.discovery-panel .panel-head h3{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.discovery-panel>.bb-state{margin:0 21px 17px;padding:14px 0}
+.discovery-summary{margin:0;padding:0 21px 14px;font-size:11.5px;color:#a9bad0}
+.discovery-summary code,.discovery-gaps code{font-size:10.5px;color:#cfe0f5;background:#16263c;border:1px solid #2b3a51;border-radius:5px;padding:1px 5px}
+.discovery-reasons{margin:0;padding-left:16px;font-size:11px;line-height:1.6;color:#b3c3d4}
+.discovery-related{display:block;font-size:11px;color:#b3c3d4}
+.discovery-gaps,.discovery-heuristics{padding:14px 21px;border-top:1px solid #29384c;font-size:11.5px;line-height:1.7;color:#a9bad0}
+.discovery-gaps h4{margin:0 0 6px;font-size:12px;color:#eaf3ff}
+.discovery-gaps ul,.discovery-heuristics ul{margin:6px 0 0;padding-left:18px}
+.discovery-gaps strong{color:#fbc579;font-weight:650}
+.discovery-heuristics summary{cursor:pointer;color:#67e3cf;font-weight:700}

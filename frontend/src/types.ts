@@ -193,3 +193,37 @@ export interface AIReview {
   test_ideas: AIReviewTestIdea[];
   limitations: string[];
 }
+
+// -- Phase 4 task A: static test discovery (nothing is executed) -------------
+export type DiscoveryReason =
+  | { kind: 'imports_changed_module'; changed_file: string }
+  | { kind: 'mentions_changed_function'; changed_file: string; function: string };
+export interface TestCandidate {
+  test_id: string;
+  file: string;
+  name: string;
+  line: number;
+  changed_in_this_scan: boolean;
+  reasons: DiscoveryReason[];
+  related_static_finding_ids: string[];
+  related_ai_finding_ids: string[];
+}
+export interface TestDiscovery {
+  scan_id: string;
+  ai_review_id: string | null;
+  commit: string;
+  method: 'static-ast';
+  /** Always false: discovery never runs anything. */
+  executed: false;
+  test_files_found: number;
+  test_files_read: number;
+  test_files_unread: number;
+  unparsed_test_files: string[];
+  tests_found: number;
+  candidate_count: number;
+  candidates: TestCandidate[];
+  coverage_gaps: { changed_file: string; reason: string; static_finding_ids: string[]; ai_finding_ids: string[] }[];
+  incomplete: boolean;
+  heuristics: string[];
+  disclaimer: string;
+}

@@ -395,6 +395,35 @@ def test_a_review_goes_stale_with_its_scan_when_the_head_moves_and_history_spans
     assert client.get(f"/api/scans/{second['id']}").json()["findings"] == second["findings"]
 
 
+def test_test_discovery_for_a_pull_request_scan_reads_only_test_files_at_the_scanned_head(make_client, monkeypatch):
+    """Phase 4 task A over Bitbucket: read-only, bounded, bound to the scan's head commit."""
+    fake = bitbucket()
+    client = make_client(fake)
+    report = client.post(f"{PR_URL}/scans").json()
+    before = len(fake.paths())
+    found = client.get(f"/api/scans/{report['id']}/tests/discovery")
+    assert found.status_code == 200, found.text
+    body = found.json()
+    assert body["commit"] == report["binding"]["head_commit"] == HEAD and body["executed"] is False
+    assert body["test_files_read"] <= main_module.BITBUCKET_TEST_READS
+    requested = fake.paths()[before:]
+    assert requested and all(HEAD in path for path in requested if "/src/" in path)  # never another commit
+    read = [path.split(f"/src/{HEAD}/", 1)[1] for path in requested if f"/src/{HEAD}/" in path and not path.endswith(f"/src/{HEAD}/")]
+    assert all(path.rsplit("/", 1)[-1].startswith("test_") or path.endswith("_test.py") or path.endswith("/") for path in read)
+    assert {gap["changed_file"] for gap in body["coverage_gaps"]} | {
+        reason["changed_file"] for item in body["candidates"] for reason in item["reasons"]
+    } <= {item["path"] for item in report["files"]}
+
+
+def test_test_discovery_needs_bitbucket_for_a_pull_request_scan(make_client, tmp_path, no_bitbucket_env):
+    client = make_client(bitbucket())
+    report = client.post(f"{PR_URL}/scans").json()
+    without = TestClient(create_app(demo_root=tmp_path / "demo", db_file=tmp_path / "scans.db"), base_url="http://127.0.0.1")
+    with without:
+        refused = without.get(f"/api/scans/{report['id']}/tests/discovery")
+    assert refused.status_code == 503 and refused.json()["code"] == "bitbucket_not_configured"
+
+
 def test_scan_goes_stale_when_the_head_moves_and_fresh_again_if_it_returns(make_client, tmp_path):
     fake = bitbucket()
     client = make_client(fake)

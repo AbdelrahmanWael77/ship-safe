@@ -5,8 +5,23 @@
 Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 
 - **Roadmap:** `prompts/PHASE-01-FOUNDATION.md` … `PHASE-05-FINAL-VALIDATION.md`; gates in `docs/ACCEPTANCE_MATRIX.md`
-- **Current phase:** 3 — Claude Code review (`prompts/PHASE-03-CLAUDE-REVIEW.md`), started 2026-11-13 by owner decision **while Phase 2 is still open**: Phase 2 task 6 (live Bitbucket smoke test) and a browser walk-through are NOT TESTED and its gates are not signed off. Phase 2 is not complete.
+- **Current phase:** 4 — isolated regression verification (`prompts/PHASE-04-REGRESSION-TESTS.md`), started 2026-11-13 by owner decision with **Run kept BLOCKED** (no verified isolated runner), and **while Phases 2 and 3 are still open**: Phase 2 task 6 (live Bitbucket smoke test) and a browser walk-through are NOT TESTED; Phase 3's real Claude Code session gate is NOT TESTED. No phase after 1 is complete or tagged.
 - **Last updated:** 2026-11-13
+
+### Phase 4 task list (order; one task at a time)
+- A. [x] Test discovery without executing code (**uncommitted** on `feat/p4-test-discovery`, cut from `f0fd75c`)
+- B. [ ] Proposed test patches as untrusted data + explicit, recorded human approval (needs migration 3) — next
+- C. [ ] Runner interface; real execution only in a verified isolated container, otherwise `execution_unavailable` / BLOCKED
+- D. [ ] Baseline versus changed-commit comparison
+- E. [ ] Synthetic challenge cases (LedgerLite)
+- F. [ ] UI and persistence for proposals, approvals, logs, timeline
+
+### Phase 4 task A — done 2026-11-13 (Windows 11, Python from `.venv`, Node 24.22.2)
+- **What changed:** `backend/app/discovery.py` finds existing pytest tests for a scan's change by reading test files (`test_*.py`, `*_test.py`) at the scan's head commit and parsing them with `ast`. It never imports, collects or runs them. A test is a candidate when its file imports a changed module; it ranks higher when its body mentions a changed function. Changed files that no test file imports (and all non-Python files) are listed as coverage gaps with their static and imported-AI findings. The selection rules are returned with the result. `GET /api/scans/{id}/tests/discovery` serves it for local scans and, through the read-only Bitbucket provider (at most 60 test files), for pull request scans. Nothing is stored. The Test intelligence page shows the result in a new panel labelled NOT RUN.
+- **Files:** `backend/app/discovery.py` (new), `backend/app/main.py`, `backend/tests/test_discovery.py` (new, 23 tests), `test_bitbucket_api.py` (2 tests), `frontend/src/TestDiscoveryPanel.tsx` (new), `TestDiscoveryPanel.test.tsx` (new, 8 tests), `App.tsx`, `types.ts`, `bitbucket.css`, `docs/ARCHITECTURE.md`.
+- **Tests:** `cd backend && ..\.venv\Scripts\python -m pytest -q` → 324 passed, 1 warning; `cd frontend && npm test` → 127 passed (8 files); `npm run build` → ✓.
+- **Evidence that nothing executes:** a hostile test file whose module-level code would write a marker file and exit is parsed and listed; the marker is not created, `exec` / `eval` / `subprocess` / `os.system` are not called, and the file is not imported. A second test checks that the module itself does not import `subprocess`, `importlib`, `runpy`, `os` or `pytest`, nor call `exec` / `eval` / `compile`.
+- **Limits / NOT TESTED:** heuristic only: indirect imports, `conftest.py` fixtures, relative and dynamic imports are not followed; parametrized cases are not expanded; a candidate is not known to cover the change. Not viewed in a browser. Mocked Bitbucket only. **No test of any repository has been run by ShipSafe.**
 
 ### Phase 3 task list (order; one task at a time)
 1. [x] Trusted identity + minimal review package (committed `d0d19d2` on `feat/p3-review-package`, cut from `74661f4`)

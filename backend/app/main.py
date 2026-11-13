@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, ValidationError
 from .ai_handoff import MAX_IMPORT_BYTES, parse_review, review_content_digest, context_digest, handoff_zip, saved_review, validate_review_binding
 from .config import load_settings
 from .db import BINDING_COLUMNS, binding, insert_scan, migrate, pull_request_scans, scanned_pull_requests, session, sync_stale
+from .discovery import discover_tests
 from .demo_seed import DEMO_BRANCHES, ensure_demo_repo
 from .errors import (
     ChangeTooLarge, ProviderAuthError, ProviderError, ProviderUnavailable, PullRequestNotFound, RefNotFound,
@@ -34,6 +35,8 @@ LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 #: Import analysis over Bitbucket costs one request per file, so it is bounded.
 #: A report cut by this bound says so in its summary.
 BITBUCKET_IMPORT_READS = 200
+# Test files read from Bitbucket for one test discovery (one request each).
+BITBUCKET_TEST_READS = 60
 #: Listing pull requests refreshes the stale marker of those that already
 #: have scans; each refresh is one or more Bitbucket requests, so it is bounded.
 STALE_CHECKS_PER_LIST = 20
@@ -332,6 +335,35 @@ def create_app(
              "current_scan": row["review_scan_id"] == scan_id}
             for row in rows
         ]
+
+    @app.get("/api/scans/{scan_id}/tests/discovery")
+    def discover_scan_tests(scan_id: str):
+        """Existing tests that may exercise this scan's change (Phase 4 task A).
+
+        Static: test files are read at the scan's head commit and parsed, never
+        imported or run. Read-only towards the repository and Bitbucket.
+        """
+        report, source = review_inputs(scan_id)
+        commit = source.get("head_commit")
+        if not commit:
+            raise HTTPException(409, detail="This scan is not bound to a commit, so tests cannot be discovered for it. Scan again.")
+        reviews = list_ai_reviews(scan_id)
+        ai_findings = reviews[0]["findings"] if reviews else []
+        if source["provider"] == "local-git":
+            try:
+                repository = provider.get_repository(report["repository_path"])
+                discovery = discover_tests(provider, repository, commit, report, ai_findings=ai_findings)
+            except RepositoryAccessDenied as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            except ScanError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        else:
+            remote = require_bitbucket()
+            with bitbucket_errors():
+                repository = remote.get_repository(source["repository_id"])
+                discovery = discover_tests(
+                    remote, repository, commit, report, ai_findings=ai_findings, max_files=BITBUCKET_TEST_READS)
+        return {"scan_id": scan_id, "ai_review_id": reviews[0]["id"] if reviews else None, **discovery}
 
     @app.get("/api/scans/{scan_id}/ai/reviews/latest")
     def latest_ai_review(scan_id: str):

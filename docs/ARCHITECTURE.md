@@ -53,6 +53,7 @@ All routes are unauthenticated and intended for loopback use only. CORS allows `
 | `GET /api/scans/{id}/ai/reviews` | 200 `AIReview[]` each + `scan_id`, `scan_binding`; newest first, max 25 | 404 |
 | `GET /api/scans/{id}/ai/reviews/latest` | 200 `AIReview` (+ `scan_id`, `scan_binding`) or `null` | 404 |
 | `GET /api/scans/{id}/ai/reviews/history` | 200 reviews of this scan and, for a pull request scan, of every stored scan of the same pull request; each + `scan_id`, `scan_binding`, `current_scan`; newest first, max 50 | 404 |
+| `GET /api/scans/{id}/tests/discovery` | 200 `TestDiscovery`: existing pytest tests that may exercise the change, found by parsing test files at the scan's head commit; `executed` is always `false`; includes `coverage_gaps` and the selection `heuristics`. Nothing is stored or run (Phase 4 task A) | 404 · 409 scan not bound to a commit · 403 / 400 local repository · Bitbucket errors for a pull request scan |
 | `GET /api/repository/status` | 200 `{repo, main_sha, branches}` for the demo repository | 500 |
 | `GET /api/bitbucket/status` | 200 `{configured, provider, workspace, repositories}`; never the credential | |
 | `GET /api/bitbucket/repositories` | 200 `BitbucketRepository[]` (approved repositories only) | Bitbucket errors, below |

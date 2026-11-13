@@ -145,3 +145,46 @@
 .assessment-body code{font-size:10.5px;color:#cfe0f5;background:#16263c;border:1px solid #2b3a51;border-radius:5px;padding:1px 5px}
 .assessment-unknowns{margin:0;padding:0 21px 18px 39px;font-size:11.5px;line-height:1.8;color:#fbc579}
 @media(max-width:1100px){.assessment-grid{grid-template-columns:1fr}}
+
+/* Gemini review panel (Claude Review page) */
+.ai-gemini{display:flex;flex-direction:column;gap:14px;margin-bottom:18px}
+.ai-gemini-head{display:flex;gap:14px;align-items:flex-start}
+.ai-gemini-head>div{flex:1;min-width:0}
+.ai-gemini-head h3{margin:0 0 4px}
+.ai-gemini-head p{margin:0;color:#9aa8bf;font-size:13px;line-height:1.5}
+.ai-gemini-icon{display:flex;padding:9px;border-radius:10px;background:#1d2b45;color:#8fb4ff;flex-shrink:0}
+.ai-gemini .ai-action{align-self:flex-start}
+.ai-origin{display:block;margin-top:3px}
+
+/* AI review results beside the static results (Risk findings, Test intelligence) */
+.ai-risk-section{margin-top:18px}
+.ai-risk-section h3,.ai-test-ideas h3{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ai-risk-list{display:flex;flex-direction:column}
+.ai-risk-row{display:flex;gap:14px;align-items:flex-start;padding:14px 0;border-top:1px solid #1d293d}
+.ai-risk-row>div{flex:1;min-width:0}
+.ai-risk-row strong{display:block;color:#e3ecfa}
+.ai-risk-row p{margin:6px 0;color:#aeb8cd;font-size:13px;line-height:1.5}
+.ai-risk-row small{display:block;color:#8290aa;font-size:12px;line-height:1.5}
+.ai-risk-empty{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.ai-test-ideas{border-top:1px solid #1d293d;margin-top:8px}
+.ai-test-scenario{margin:4px 0;color:#aeb8cd;font-size:13px;line-height:1.5}
+.ai-test-empty{padding:0 22px 18px}
+
+/* PR analysis: Gemini toggle and AI review section */
+.bb-ai-toggle{margin:4px 0 14px}
+.bb-ai-toggle strong{display:inline-flex;align-items:center;gap:4px}
+.bb-ai{margin-top:18px}
+.bb-ai h3{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bb-ai-summary{color:#c6d0e2;font-size:14px;line-height:1.55;margin:4px 0 12px}
+.bb-ai-subhead{margin:16px 0 4px;display:flex;align-items:center;gap:8px;color:#e3ecfa}
+.bb-ai-tests{margin:6px 0 0;padding-left:18px;color:#aeb8cd;font-size:13px;line-height:1.6}
+.bb-ai-error{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;color:#ffb4b4}
+.bb-ai-error p{display:flex;align-items:center;gap:6px;margin:0}
+
+/* AI model picker and usage line */
+.bb-ai-toggle-row{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin:4px 0 14px}
+.bb-ai-toggle-row .bb-ai-toggle{margin:0;flex:1;min-width:260px}
+.ai-provider-select{min-width:240px}
+.ai-provider-select select{min-width:200px}
+.bb-ai-usage{margin:4px 0 0;color:#8fb4ff;font-size:12px}
+.ai-provider-pills{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}

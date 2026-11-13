@@ -169,10 +169,37 @@ export interface AIReviewTestIdea {
   expected_behavior: string;
   file: string | null;
 }
+/** GET /api/ai/gemini/status. The API key itself never reaches the browser. */
+export interface GeminiStatus {
+  configured: boolean;
+  model: string | null;
+}
+
+export type AIProviderName = 'gemini' | 'openai'
+/** GET /api/ai/providers: the AI review providers the server can call. Never includes a key. */
+export interface AIProvider {
+  provider: AIProviderName;
+  label: string;
+  configured: boolean;
+  model: string | null;
+  pricing_known: boolean;
+}
+
 export interface AIReview {
   id: string;
   imported_at: string;
-  source: 'user_imported_json_unverified_provenance';
+  /** Manual Claude Code import, or generated server-side through the Gemini or OpenAI API. All are unverified. */
+  source: 'user_imported_json_unverified_provenance' | 'gemini_api_generated_unverified' | 'openai_api_generated_unverified';
+  /** Model reviews only: which model produced it, what it cost and how long it took. */
+  generator?: {
+    provider: AIProviderName;
+    model: string;
+    usage?: { input_tokens: number; output_tokens: number; reasoning_tokens: number; cached_input_tokens?: number };
+    duration_ms?: number;
+    /** OpenAI models with a known published price only. */
+    estimated_cost_usd?: number;
+    prices_as_of?: string;
+  };
   verification_status: 'not_independently_verified';
   tests_executed: false;
   schema_version: 'shipsafe.ai-review.v1' | 'shipsafe.ai-review.v2';

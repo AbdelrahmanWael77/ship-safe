@@ -54,7 +54,22 @@ Optional. With none of these set, Bitbucket is off and ShipSafe behaves exactly 
 - **Scope.** Give the credential read access to repositories and pull requests only. ShipSafe makes no Bitbucket writes.
 - **Where the token lives.** Only in your local `.env` (git-ignored) or an approved secret store. Never commit it, paste it into a chat or prompt, or put it in a `VITE_*` variable.
 - **Where it does not appear.** The token is wrapped in `config.Secret`: it is absent from `repr(settings)`, cannot be copied by `dataclasses.asdict`, serialised to JSON, or pickled, and is not in any log line or API response (`backend/tests/test_bitbucket_settings.py`). Only the HTTP client that talks to `api.bitbucket.org` receives it.
-- **Current limit.** At startup the API builds the read-only connector from these settings and sends no request. The `/api/bitbucket/*` routes use it (see `docs/ARCHITECTURE.md`), and the dashboard's Repositories, Pull requests and PR analysis screens call those routes. It has never been run against live Bitbucket.
+- **Current limit.** At startup the API builds the read-only connector from these settings and sends no request. The `/api/bitbucket/*` routes use it (see `docs/ARCHITECTURE.md`), and the dashboard's Repositories, Pull requests and PR analysis screens call those routes. It has been run against one live Bitbucket Cloud workspace (2026-11-13: repositories, pull request list and detail, and one pull request scan).
+- **Live mode.** When these settings are present, the dashboard starts in live mode: it shows only Bitbucket pull request scans and never loads or creates synthetic demo scans. Without them, the demo works as before.
+
+## Gemini AI review settings
+
+Optional. With no key set, the Gemini panel on the Claude Review page says it is not configured and nothing calls Google.
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `SHIPSAFE_GEMINI_API_KEY` | yes, to turn Gemini on | **Secret.** Google AI Studio / Gemini API key. Sent only by the API server, only in the `x-goog-api-key` header to `generativelanguage.googleapis.com`. |
+| `SHIPSAFE_GEMINI_MODEL` | no | Model name, default `gemini-flash-latest` (Google's alias for its current stable Flash model). A `models/` prefix is removed. Setting a model without a key stops the API at startup. |
+
+- **What is sent.** Exactly the review context of the Claude handoff package: the scan's changed files and diffs (cut at 140 lines per file), static findings, and limitations, with secret-looking text redacted on a best-effort basis. **For any code that is not the synthetic demo, the API refuses (HTTP 428) unless the request carries `acknowledge_source_sharing: true`**; the dashboard sends it only after the person ticks the confirmation box for that scan.
+- **What is stored.** Gemini's answer is untrusted. ShipSafe sets the scan id, context digest and reviewed source itself, drops findings that point at files outside the scan or are incomplete (and says so in the limitations), removes unknown static-finding ids, and validates the result with the same `shipsafe.ai-review.v2` rules as a manual Claude import. It is stored with `source: gemini_api_generated_unverified` and `generator.model`, and is shown everywhere as an unverified AI suggestion. Nothing is executed or applied, and no test is claimed as run.
+- **Where the key does not appear.** It is wrapped in `config.Secret`, never put in a URL, and masked out of Google's error messages before they are shown (`backend/tests/test_gemini.py`).
+- **Billing.** A key whose Google project has no access to the Gemini API (for example "free tier is not available for this project") gets HTTP 502 `gemini_permission_denied` with Google's reason; that has to be fixed in Google AI Studio, not in ShipSafe.
 
 ## Network binding
 
@@ -75,4 +90,4 @@ The API has no authentication. Do not start it with `--host 0.0.0.0` or put it b
 
 ## Not implemented
 
-There are no Claude or other credential settings besides the Bitbucket token above, and no code that would read them.
+There are no Claude credential settings, and no code that would read them: Claude reviews stay a manual handoff. The only secrets are the Bitbucket token and the Gemini API key above.

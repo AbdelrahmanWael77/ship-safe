@@ -3,10 +3,12 @@ heuristic risk findings, persisted scan history."""
 from __future__ import annotations
 
 import json
+import time
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +16,10 @@ from fastapi.responses import JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, ValidationError
 
-from .ai_handoff import MAX_IMPORT_BYTES, parse_review, review_content_digest, context_digest, handoff_zip, saved_review, validate_review_binding
+from .ai_handoff import MAX_IMPORT_BYTES, parse_review, review_content_digest, review_context, context_digest, handoff_zip, saved_review, validate_review_binding
+from .gemini import SOURCE as GEMINI_SOURCE, GeminiClient, GeminiError, build_review, digest_of
+from .openai_review import PRICES_AS_OF as OPENAI_PRICES_AS_OF, PRICES_PER_MILLION as OPENAI_PRICES, SOURCE as OPENAI_SOURCE
+from .openai_review import OpenAIClient, estimated_cost_usd as openai_cost
 from .config import load_settings
 from .db import BINDING_COLUMNS, binding, insert_scan, migrate, pull_request_scans, scanned_pull_requests, session, sync_stale
 from .assessment import assess, render_markdown
@@ -99,15 +104,26 @@ class ScanRequest(BaseModel):
     head_ref: str = Field(default="feature/release-candidate", min_length=1, max_length=150)
 
 
+class GeminiReviewRequest(BaseModel):
+    acknowledge_source_sharing: bool = False
+
+
+class ModelReviewRequest(BaseModel):
+    provider: Literal["gemini", "openai"]
+    acknowledge_source_sharing: bool = False
+
+
 def create_app(
     demo_root: Path | None = None,
     db_file: Path | None = None,
     allowed_root: Path | None = None,
     bitbucket: BitbucketCloudProvider | None = None,
     runner: Runner | None = None,
+    gemini: GeminiClient | None = None,
+    openai: OpenAIClient | None = None,
 ) -> FastAPI:
-    """``bitbucket`` overrides the provider built from settings (tests pass one
-    with a mocked transport)."""
+    """``bitbucket`` and ``gemini`` override the clients built from settings
+    (tests pass ones with a mocked transport)."""
     settings = load_settings(demo_root=demo_root, db_file=db_file, allowed_root=allowed_root)
     demo_root, db_file = settings.demo_dir, settings.db_path
     # Deny by default: only the synthetic repository is scannable unless
@@ -120,6 +136,12 @@ def create_app(
             settings.bitbucket.workspace, settings.bitbucket.repositories,
             token=settings.bitbucket.token.reveal(), email=settings.bitbucket.email,
         )
+    # Built only when SHIPSAFE_GEMINI_API_KEY is set; no request is sent here.
+    if gemini is None and settings.gemini:
+        gemini = GeminiClient(settings.gemini.api_key.reveal(), settings.gemini.model)
+    if openai is None and settings.openai:
+        openai = OpenAIClient(settings.openai.api_key.reveal(), settings.openai.model,
+                              reasoning_effort=settings.openai.reasoning_effort or None)
 
     def connection():
         return session(db_file)
@@ -150,6 +172,10 @@ def create_app(
     @app.exception_handler(BitbucketFailure)
     async def bitbucket_failure_response(_request: Request, exc: BitbucketFailure):
         # "detail" stays a string, like every other handled error of this API.
+        return JSONResponse(status_code=exc.status, content={"detail": exc.message, "code": exc.code})
+
+    @app.exception_handler(GeminiError)
+    async def gemini_failure_response(_request: Request, exc: GeminiError):
         return JSONResponse(status_code=exc.status, content={"detail": exc.message, "code": exc.code})
 
     @app.get("/api/health")
@@ -304,6 +330,74 @@ def create_app(
                 (review["id"], scan_id, review["imported_at"], json.dumps(review)),
             )
         return served_review(review, scan_id, source)
+
+    # -- AI model reviews (server-side API calls: Gemini, OpenAI) --------------
+
+    ai_clients = {"gemini": gemini, "openai": openai}
+    ai_meta = {
+        "gemini": {"label": "Google Gemini", "company": "Google", "source": GEMINI_SOURCE, "env": "SHIPSAFE_GEMINI_API_KEY"},
+        "openai": {"label": "OpenAI", "company": "OpenAI", "source": OPENAI_SOURCE, "env": "SHIPSAFE_OPENAI_API_KEY"},
+    }
+
+    @app.get("/api/ai/providers")
+    def ai_providers():
+        """Which AI review providers the server can call, and with which model. Never includes a key."""
+        return [{
+            "provider": name, "label": ai_meta[name]["label"], "configured": client is not None,
+            "model": client.model if client else None,
+            "pricing_known": bool(client and name == "openai" and client.model in OPENAI_PRICES),
+        } for name, client in ai_clients.items()]
+
+    @app.get("/api/ai/gemini/status")
+    def gemini_status():
+        """Whether a Gemini key is configured, and which model. Never includes the key."""
+        return {"configured": gemini is not None, "model": gemini.model if gemini else None}
+
+    def generate_review(scan_id: str, provider: str, acknowledged: bool) -> dict:
+        """Send this scan's review context to an AI provider and store the answer
+        as an unverified AI review. Non-demo code is sent only with an explicit
+        acknowledgement, exactly like the Claude handoff export."""
+        client, meta = ai_clients[provider], ai_meta[provider]
+        if client is None:
+            raise GeminiError(503, f"{provider}_not_configured",
+                              f"{meta['label']} is not configured. Set {meta['env']} on the server, then restart the API.")
+        report, source = review_inputs(scan_id)
+        if needs_acknowledgement(report, source) and not acknowledged:
+            raise HTTPException(
+                status_code=428,
+                detail="This scan contains source code that is not the synthetic demo. Confirm that you are allowed "
+                       f"to share it with {meta['label']} (acknowledge_source_sharing: true) to request a review.",
+            )
+        context = review_context(report, source)
+        started = time.monotonic()
+        raw, usage = client.review(context)
+        duration_ms = round((time.monotonic() - started) * 1000)
+        try:
+            validated = build_review(raw, report, source, digest_of(context), client.model, client.label)
+            validate_review_binding(validated, report, source)
+        except (ValueError, ValidationError) as exc:
+            raise GeminiError(502, f"{provider}_invalid_review",
+                              f"{client.label}'s answer did not pass review validation: {str(exc)[:500]}") from exc
+        generator = {"provider": provider, "model": client.model, "usage": usage, "duration_ms": duration_ms}
+        if provider == "openai":
+            cost = openai_cost(client.model, usage)
+            if cost is not None:
+                generator.update(estimated_cost_usd=cost, prices_as_of=OPENAI_PRICES_AS_OF)
+        review = {**saved_review(validated), "source": meta["source"], "generator": generator}
+        with connection() as conn:
+            conn.execute(
+                "INSERT INTO ai_reviews (id, scan_id, imported_at, review_json) VALUES (?, ?, ?, ?)",
+                (review["id"], scan_id, review["imported_at"], json.dumps(review)),
+            )
+        return served_review(review, scan_id, source)
+
+    @app.post("/api/scans/{scan_id}/ai/model-reviews", status_code=201)
+    def create_model_review(scan_id: str, body: ModelReviewRequest):
+        return generate_review(scan_id, body.provider, body.acknowledge_source_sharing)
+
+    @app.post("/api/scans/{scan_id}/ai/gemini-reviews", status_code=201)
+    def create_gemini_review(scan_id: str, body: GeminiReviewRequest | None = None):
+        return generate_review(scan_id, "gemini", bool(body and body.acknowledge_source_sharing))
 
     def served_review(review: dict, scan_id: str, scan_binding: dict) -> dict:
         """A stored review plus the scan it belongs to and that scan's binding.

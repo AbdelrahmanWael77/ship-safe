@@ -1,7 +1,7 @@
 // The dashboard as a whole: the existing demo flow (which must keep working
 // exactly as before the Bitbucket screens) and navigation into the Bitbucket
 // section. `fetch` is stubbed; nothing leaves jsdom.
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from './App'
@@ -18,6 +18,13 @@ async function start(routes: Routes = {}) {
   const api = stubApi({ ...demoRoutes(), ...routes })
   render(<App />)
   await screen.findByRole('heading', { name: 'Release overview' })
+  return api
+}
+/** Bitbucket configured and no pull request scanned yet: the live overview shows its empty state. */
+async function startLive(routes: Routes = {}) {
+  const api = stubApi({ ...demoRoutes(), [STATUS]: { body: statusConfigured() }, ...routes })
+  render(<App />)
+  await screen.findByRole('heading', { name: 'No pull request scanned yet' })
   return api
 }
 const primaryNav = () => within(screen.getByRole('navigation', { name: 'Primary navigation' }))
@@ -50,7 +57,7 @@ describe('existing demo dashboard', () => {
   })
 
   test('all earlier navigation entries are still there, in the same order, with Release assessment added', async () => {
-    await start({ [STATUS]: { body: statusConfigured() } })
+    await startLive()
     expect(primaryNav().getAllByRole('button').map(button => button.textContent?.replace(/\d+$/, ''))).toEqual([
       'Overview', 'Code changes', 'Risk findings', 'Test intelligence', 'Claude Review', 'Release assessment', 'Scan history',
     ])
@@ -69,19 +76,60 @@ describe('existing demo dashboard', () => {
   })
 })
 
+describe('live mode (Bitbucket configured): no synthetic demo data', () => {
+  test('the demo is never requested and no demo scan is created', async () => {
+    const api = await startLive({ '/api/scans': { body: [] } })
+    expect(api.calls).not.toContain('/api/demo')
+    expect(api.count('POST /api/scans')).toBe(0)
+    expect(screen.queryByText('LOCAL DEMO')).not.toBeInTheDocument()
+    expect(screen.queryByText('LIVE DEMO')).not.toBeInTheDocument()
+    expect(screen.queryByText(/LedgerLite/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Synthetic demo repository/)).not.toBeInTheDocument()
+    expect(screen.getByText('BITBUCKET · READ-ONLY')).toBeVisible()
+    expect(screen.getByText('BITBUCKET LIVE')).toBeVisible()
+    expect(screen.getByText('API connected')).toBeVisible()
+  })
+
+  test('a stored demo scan is neither opened nor listed in the history', async () => {
+    const api = await startLive()  // demoRoutes() serves a demo scan in the history
+    expect(api.calls).not.toContain(`/api/scans/${report.id}`)
+    expect(screen.queryByRole('heading', { name: 'Release overview' })).not.toBeInTheDocument()
+
+    await userEvent.click(primaryNav().getByRole('button', { name: /Scan history/ }))
+    expect(await screen.findByText('0 saved')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'No saved scans' })).toBeVisible()
+  })
+
+  test('the overview button leads to the pull request list', async () => {
+    await startLive({ [REPOS]: { body: repositories() }, '/api/bitbucket/repositories/ledger/pull-requests?state=open': { body: pullRequestsBeforeScan() } })
+    await userEvent.click(within(screen.getByRole('region', { name: 'Analyze a pull request' })).getByRole('button', { name: /Choose a pull request/ }))
+    expect(document.querySelector('.topbar-left strong')).toHaveTextContent('Pull requests')
+    expect(await screen.findByText('#7 Change 7')).toBeVisible()
+  })
+
+  test('Configuration names the Bitbucket workspace and approved repositories, not the demo', async () => {
+    await startLive()
+    await userEvent.click(screen.getByRole('button', { name: 'Configuration' }))
+    const status = statusConfigured()
+    expect(await screen.findByText(`Bitbucket · ${status.workspace}`)).toBeVisible()
+    expect(screen.getByText(status.repositories.join(', '))).toBeVisible()
+    expect(screen.queryByText('ShipSafe Demo')).not.toBeInTheDocument()
+  })
+})
+
 describe('Bitbucket navigation', () => {
   test('the sidebar has a Bitbucket group with Repositories and Pull requests', async () => {
-    await start({ [STATUS]: { body: statusConfigured() } })
+    await startLive()
     expect(bitbucketNav().getAllByRole('button').map(button => button.textContent)).toEqual(['Repositories', 'Pull requests'])
   })
 
   test('the status is asked once at start; repositories are not loaded until the page is opened', async () => {
-    const api = await start({ [STATUS]: { body: statusConfigured() }, [REPOS]: { body: repositories() } })
+    const api = await startLive({ [REPOS]: { body: repositories() } })
     expect([api.count(STATUS), api.count(REPOS)]).toEqual([1, 0])
   })
 
   test('opening Repositories shows the Bitbucket page, marks it active and names it in the top bar', async () => {
-    const api = await start({ [STATUS]: { body: statusConfigured() }, [REPOS]: { body: repositories() } })
+    const api = await startLive({ [REPOS]: { body: repositories() } })
     const entry = bitbucketNav().getByRole('button', { name: 'Repositories' })
     await userEvent.click(entry)
 
@@ -92,24 +140,25 @@ describe('Bitbucket navigation', () => {
     expect(entry).toHaveClass('active')
     expect(primaryNav().getByRole('button', { name: /Overview/ })).not.toHaveClass('active')
     expect(document.querySelector('.topbar-left strong')).toHaveTextContent('Repositories')
-    expect(screen.queryByRole('heading', { name: 'Release overview' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'No pull request scanned yet' })).not.toBeInTheDocument()
     expect([api.count(STATUS), api.count(REPOS)]).toEqual([1, 1])
   })
 
-  test('going back to the overview restores the demo exactly', async () => {
-    await start({ [STATUS]: { body: statusConfigured() }, [REPOS]: { body: repositories() } })
+  test('going back to the overview restores the live overview, never the demo', async () => {
+    await startLive({ [REPOS]: { body: repositories() } })
     await userEvent.click(bitbucketNav().getByRole('button', { name: 'Repositories' }))
     await screen.findByText('acme/ledger')
     await userEvent.click(primaryNav().getByRole('button', { name: /Overview/ }))
 
-    expect(await screen.findByRole('heading', { name: 'Release overview' })).toBeVisible()
-    expect(screen.getByText('LOCAL DEMO')).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'No pull request scanned yet' })).toBeVisible()
+    expect(screen.getByText('BITBUCKET · READ-ONLY')).toBeVisible()
+    expect(screen.queryByText('LOCAL DEMO')).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Bitbucket' })).not.toBeInTheDocument()
     expect(document.querySelector('.topbar-left strong')).toHaveTextContent('Overview')
   })
 
   test('configured: no "Off" tag on the navigation entry', async () => {
-    await start({ [STATUS]: { body: statusConfigured() } })
+    await startLive()
     expect(bitbucketNav().queryByText('Off')).not.toBeInTheDocument()
   })
 
@@ -138,7 +187,7 @@ describe('pull requests in the dashboard', () => {
   const configured = () => ({ [STATUS]: { body: statusConfigured() }, [REPOS]: { body: repositories() }, [LIST]: { body: pullRequestsBeforeScan() }, [DETAIL]: { body: pullRequestDetail() } })
 
   test('repository → pull request → scan → report; the history is refreshed and the selection survives leaving', async () => {
-    const api = await start({ ...configured(), [`POST ${DETAIL}/scans`]: { status: 201, body: pullRequestScanReport() } })
+    const api = await startLive({ ...configured(), [`POST ${DETAIL}/scans`]: { status: 201, body: pullRequestScanReport() } })
     const user = userEvent.setup()
     await user.click(bitbucketNav().getByRole('button', { name: 'Pull requests' }))
     await user.click(await screen.findByRole('button', { name: /Analyze pull request 7/ }))
@@ -156,7 +205,7 @@ describe('pull requests in the dashboard', () => {
   })
 
   test('the scan history marks a pull request scan and never shows it as current', async () => {
-    await start({ ...configured(), '/api/scans': { body: [...demoHistory(), pullRequestHistoryItem()] } })
+    await start({ ...configured(), '/api/scans': { body: [...demoHistory(), pullRequestHistoryItem()] }, [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
     await userEvent.click(primaryNav().getByRole('button', { name: /Scan history/ }))
     const row = (await screen.findByText(/Bitbucket · acme\/ledger · PR #7/)).closest('tr') as HTMLElement
     expect(row.querySelector('[data-stale]')).toHaveAttribute('data-stale', 'unchecked')
@@ -164,7 +213,7 @@ describe('pull requests in the dashboard', () => {
   })
 
   test('"Open in dashboard" loads the stored scan into the existing pages', async () => {
-    await start({ ...configured(), [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
+    await startLive({ ...configured(), [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
     const user = userEvent.setup()
     await user.click(bitbucketNav().getByRole('button', { name: 'Pull requests' }))
     await user.click(await screen.findByRole('button', { name: /Analyze pull request 7/ }))
@@ -195,17 +244,15 @@ describe('pull requests in the dashboard', () => {
     expect(await screen.findByRole('heading', { name: /#7 Change 7/ })).toBeVisible()
   })
 
-  test('opening a demo scan from the history brings the demo labels back', async () => {
-    await start({ ...configured(), '/api/scans': { body: [pullRequestHistoryItem(), ...demoHistory()] }, [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
+  test('the latest pull request scan opens at start even when a newer demo scan is stored; demo rows are not listed', async () => {
+    const api = await start({ ...configured(), '/api/scans': { body: [...demoHistory(), pullRequestHistoryItem()] }, [`/api/scans/${SCAN_ID}`]: { body: storedScanReport() }, [`/api/scans/${SCAN_ID}/ai/reviews`]: { body: [] } })
+    expect(screen.getByRole('region', { name: 'Scan source' })).toBeVisible()
+    expect(api.calls).not.toContain(`/api/scans/${report.id}`)
     await userEvent.click(primaryNav().getByRole('button', { name: /Scan history/ }))
-    const demoRow = (await screen.findAllByRole('row')).find(row => !row.textContent?.includes('PR #7') && within(row).queryByRole('button', { name: /Open/ })) as HTMLElement
-    await userEvent.click(within(demoRow).getByRole('button', { name: /Open/ }))
-
-    expect(await screen.findByText('LOCAL DEMO')).toBeVisible()
-    expect(screen.getByText('LIVE DEMO')).toBeVisible()
-    expect(screen.getByText('LedgerLite project')).toBeVisible()
-    expect(screen.queryByRole('region', { name: 'Scan source' })).not.toBeInTheDocument()
-    expect(screen.queryByText('BITBUCKET · READ-ONLY')).not.toBeInTheDocument()
+    expect(await screen.findByText('1 saved')).toBeVisible()
+    const rows = (await screen.findAllByRole('row')).slice(1)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toHaveTextContent('PR #7')
   })
 })
 
@@ -437,5 +484,143 @@ describe('Claude Review page: history, side by side, import status', () => {
     await chooseFile('x'.repeat(256 * 1024 + 1))
     expect(await screen.findByRole('alert')).toHaveTextContent(/too large/)
     expect(api.count(`POST ${reviews}`)).toBe(0)
+  })
+})
+
+describe('AI model review panel (Claude Review page)', () => {
+  const PROVIDERS = '/api/ai/providers'
+  const POST_REVIEW = `POST /api/scans/${report.id}/ai/model-reviews`
+  const context = (required: boolean) => ({ [`/api/scans/${report.id}/ai/context`]: { body: { scan_id: report.id, context_digest: '0'.repeat(64), review_count: 0, acknowledgement_required: required } } })
+  const openaiOnly = { [PROVIDERS]: { body: [
+    { provider: 'gemini', label: 'Google Gemini', configured: false, model: null, pricing_known: false },
+    { provider: 'openai', label: 'OpenAI', configured: true, model: 'gpt-6-luna', pricing_known: true },
+  ] } }
+  const both = { [PROVIDERS]: { body: [
+    { provider: 'gemini', label: 'Google Gemini', configured: true, model: 'gemini-test', pricing_known: false },
+    { provider: 'openai', label: 'OpenAI', configured: true, model: 'gpt-6-luna', pricing_known: true },
+  ] } }
+  const modelReview = (): AIReview => ({
+    id: 'o1', imported_at: '2026-11-13T12:00:00+00:00', source: 'openai_api_generated_unverified',
+    generator: { provider: 'openai', model: 'gpt-6-luna', usage: { input_tokens: 3400, output_tokens: 2600, reasoning_tokens: 700 }, duration_ms: 18200, estimated_cost_usd: 0.00164, prices_as_of: '2026-11-13' },
+    verification_status: 'not_independently_verified', tests_executed: false, schema_version: 'shipsafe.ai-review.v2',
+    scan_id: report.id, context_digest: '0'.repeat(64), summary: 'The ownership check is gone.', recommendation: 'block_release',
+    findings: [{ id: 'F1', status: 'suspected', title: 'OpenAI: ownership check removed', severity: 'high', category: 'Authorization',
+      file: report.files[0].path, line: 3, evidence: 'guard removed', rationale: 'Anyone can read any invoice.', recommendation: 'Restore it.',
+      confidence: 'medium', related_static_finding_ids: [], suggested_validation: 'Read as another user.' }],
+    test_ideas: [], limitations: ['Generated automatically by the OpenAI API (model gpt-6-luna).'], missing_context: [],
+  })
+  const openReview = async () => { await userEvent.click(primaryNav().getByRole('button', { name: /Claude Review/ })) }
+  const panel = () => within(screen.getByRole('region', { name: 'Review with an AI model' }))
+  const bodies = () => vi.mocked(fetch).mock.calls.filter(call => String(call[0]).endsWith('/ai/model-reviews')).map(call => JSON.parse(String(call[1]?.body)))
+
+  test('no model configured: the panel explains the setup and offers no button', async () => {
+    await start()  // the providers route answers 404
+    await openReview()
+    expect(await panel().findByText(/No AI model is configured/)).toBeVisible()
+    expect(panel().queryByRole('button', { name: /review/i })).not.toBeInTheDocument()
+    expect(screen.getByText('NO API KEY IN SHIPSAFE')).toBeVisible()
+  })
+
+  test('demo scan: one click stores an OpenAI review, shown as generated, unverified, with tokens and cost', async () => {
+    const api = await start({ ...openaiOnly, ...context(false), [POST_REVIEW]: { status: 201, body: modelReview() } })
+    await openReview()
+    expect(screen.getByText('NO CLAUDE KEY · AI KEYS ON SERVER')).toBeVisible()
+    expect(panel().queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(panel().queryByRole('combobox')).not.toBeInTheDocument()  // only one provider
+    await userEvent.click(await panel().findByRole('button', { name: /Run OpenAI review/ }))
+
+    expect(await panel().findByRole('status')).toHaveTextContent('OpenAI review stored: 1 proposed finding (6,000 tokens (3,400 in · 2,600 out, 700 reasoning) · ≈ $0.0016 · 18.2 s). It is unverified and no tests were run.')
+    expect(await screen.findByRole('heading', { name: 'OpenAI: ownership check removed' })).toBeVisible()
+    expect(screen.getByText(/Generated by OpenAI · gpt-6-luna .* ≈ \$0\.0016/)).toBeVisible()
+    expect(within(screen.getByRole('region', { name: 'Previous reviews' })).getByText('OpenAI · gpt-6-luna')).toBeVisible()
+    expect(api.count(POST_REVIEW)).toBe(1)
+    expect(bodies()).toEqual([{ provider: 'openai', acknowledge_source_sharing: false }])
+  })
+
+  test('two providers: the person picks the model; non-demo code needs the confirmation, which is sent', async () => {
+    await start({ ...both, ...context(true), [POST_REVIEW]: { status: 201, body: modelReview() } })
+    await openReview()
+    const picker = await panel().findByRole('combobox', { name: 'AI model' })
+    expect(picker).toHaveValue('openai')
+    await userEvent.selectOptions(picker, 'gemini')
+    const button = panel().getByRole('button', { name: /Run Google Gemini review/ })
+    expect(button).toBeDisabled()
+    expect(panel().getByText(/I am allowed to send it to Google Gemini/)).toBeVisible()
+    await userEvent.click(panel().getByRole('checkbox'))
+    await userEvent.click(button)
+    await panel().findByRole('status')
+    expect(bodies()).toEqual([{ provider: 'gemini', acknowledge_source_sharing: true }])
+  })
+
+  test('a failure is shown next to the button and adds nothing', async () => {
+    await start({ ...openaiOnly, ...context(false), [POST_REVIEW]: { status: 502, body: { detail: 'OpenAI rejected the server\'s API key.', code: 'openai_auth_failed' } } })
+    await openReview()
+    await userEvent.click(await panel().findByRole('button', { name: /Run OpenAI review/ }))
+    expect(await panel().findByRole('alert')).toHaveTextContent('OpenAI review failed: OpenAI rejected the server\'s API key.')
+    expect(screen.getByRole('heading', { name: 'No Claude review imported yet' })).toBeVisible()
+    expect(document.querySelector('.alert-error')).toBeNull()
+  })
+
+  test('Configuration lists the configured AI models', async () => {
+    await start(both)
+    await userEvent.click(screen.getByRole('button', { name: 'Configuration' }))
+    expect(await screen.findByText('OpenAI · gpt-6-luna')).toBeVisible()
+    expect(screen.getByText('Google Gemini · gemini-test')).toBeVisible()
+  })
+})
+
+describe('AI review results on Risk findings and Test intelligence', () => {
+  const reviews = `/api/scans/${report.id}/ai/reviews`
+  const aiReview = (): AIReview => ({
+    id: 'ai1', imported_at: '2026-11-13T12:00:00+00:00', source: 'user_imported_json_unverified_provenance',
+    verification_status: 'not_independently_verified', tests_executed: false, schema_version: 'shipsafe.ai-review.v2',
+    scan_id: report.id, context_digest: '0'.repeat(64), summary: 'Two problems in the payment flow.', recommendation: 'block_release',
+    findings: [{ id: 'F1', status: 'suspected', title: 'TLS errors accepted', severity: 'critical', category: 'Security',
+      file: report.files[0].path, line: 81, evidence: 'error.proceed()', rationale: 'Certificate errors no longer stop the page.',
+      recommendation: 'Cancel on SSL errors.', confidence: 'high', related_static_finding_ids: [], suggested_validation: 'Load with a self-signed certificate.' }],
+    test_ideas: [{ title: 'WebView rejects bad certificates', scenario: 'Serve the page with a self-signed certificate.', expected_behavior: 'Load is cancelled.', file: report.files[0].path }],
+    limitations: ['Static review only.'], missing_context: [],
+  })
+  /** The demo report, but as a change to Dart files with no static findings. */
+  const dartReport = () => ({ ...report, findings: [], test_suggestions: [], summary: { ...report.summary, finding_count: 0 },
+    files: report.files.map((file, index) => ({ ...file, path: `lib/feature_${index}.dart` })) })
+  const go = (name: RegExp) => userEvent.click(primaryNav().getByRole('button', { name }))
+
+  test('Risk findings lists the AI review findings apart from the static ones, labelled unverified', async () => {
+    await start({ [reviews]: { body: [aiReview()] } })
+    await go(/Risk findings/)
+    const section = within(screen.getByRole('region', { name: 'AI review findings' }))
+    expect(section.getByText('UNVERIFIED AI SUGGESTIONS')).toBeVisible()
+    expect(section.getByText(/F1 · TLS errors accepted/)).toBeVisible()
+    expect(section.getByText(/How to validate \(not done\): Load with a self-signed certificate/)).toBeVisible()
+    for (const finding of report.findings) expect(section.queryByText(finding.title)).not.toBeInTheDocument()  // static stays in its own list
+    expect(screen.getByText(`${report.findings.length} suspected risk${report.findings.length !== 1 ? 's' : ''}`)).toBeVisible()  // count is static only
+  })
+
+  test('Test intelligence lists the AI test ideas as not run', async () => {
+    await start({ [reviews]: { body: [aiReview()] } })
+    await go(/Test intelligence/)
+    const ideas = within(screen.getByRole('region', { name: 'AI test ideas' }))
+    expect(ideas.getByText('AI · NOT RUN')).toBeVisible()
+    expect(ideas.getByText('WebView rejects bad certificates')).toBeVisible()
+    expect(ideas.getByText(/Expected: Load is cancelled/)).toBeVisible()
+  })
+
+  test('without an AI review both pages point to the Claude Review page', async () => {
+    await start()
+    await go(/Risk findings/)
+    expect(within(screen.getByRole('region', { name: 'AI review findings' })).getByText('No AI review of this scan yet.')).toBeVisible()
+    await userEvent.click(screen.getByRole('button', { name: /Open Claude Review/ }))
+    expect(await screen.findByRole('region', { name: 'Review with an AI model' })).toBeVisible()
+  })
+
+  test('a non-Python change says the static rules did not analyse it instead of "no risk patterns"', async () => {
+    await start({ [`/api/scans/${report.id}`]: { body: dartReport() } })
+    await go(/Risk findings/)
+    expect(await screen.findByRole('heading', { name: 'No static findings' })).toBeVisible()
+    expect(screen.getByText(/Static rules cover Python files only: \d+ of \d+ changed files? \(\.dart\)/)).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'No risk patterns detected' })).not.toBeInTheDocument()
+    await go(/Test intelligence/)
+    expect(await screen.findByText(/Static rules cover Python files only/)).toBeVisible()
   })
 })

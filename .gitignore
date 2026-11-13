@@ -16,3 +16,7 @@ review-input.json
 .env
 .env.*
 !.env.example
+
+# Playwright end-to-end output (may contain screenshots of real data)
+frontend/playwright-report/
+frontend/test-results/

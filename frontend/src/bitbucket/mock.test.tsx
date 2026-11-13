@@ -86,7 +86,8 @@ describe('dashboard', () => {
     mockMode()
     const api = stubApi(demoRoutes())
     render(<App />)
-    await screen.findByRole('heading', { name: 'Release overview' })
+    // The mock status says "configured", so the dashboard starts in live mode (no demo scan).
+    await screen.findByRole('heading', { name: 'No pull request scanned yet' })
     const banner = () => screen.getByText('MOCK DATA', { selector: '.mock-banner strong' })
     expect(banner()).toBeVisible()
 

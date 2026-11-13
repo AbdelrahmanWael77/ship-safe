@@ -14,6 +14,8 @@ export default defineConfig({
   // Frontend tests (`npm test`). jsdom only; no test contacts the backend or Bitbucket.
   test: {
     environment: 'jsdom',
+    // e2e/ holds the Playwright suite (`npm run e2e`), which needs the real app running.
+    include: ['src/**/*.test.{ts,tsx}'],
     setupFiles: ['./src/test/setup.ts'],
     restoreMocks: true,
     unstubGlobals: true

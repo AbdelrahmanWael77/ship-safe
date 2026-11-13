@@ -1,4 +1,4 @@
-import type { BitbucketStatus } from '../types'
+import type { AIProvider, BitbucketStatus } from '../types'
 import type { BitbucketNavigate, BitbucketPage, BitbucketSelection } from './pages'
 import { bitbucketPageLabel } from './pages'
 import { PrAnalysisPage } from './PrAnalysisPage'
@@ -9,17 +9,18 @@ import type { Loaded } from './useLoad'
 const DESCRIPTIONS: Record<BitbucketPage, string> = {
   repositories: 'Approved Bitbucket Cloud repositories, read-only. ShipSafe never writes to Bitbucket.',
   'pull-requests': 'Pull requests of an approved repository, read-only. Pick one to analyze it.',
-  'pr-analysis': 'Scan a pull request at its exact commits. Findings are static suspicions; no code is run and nothing is written to Bitbucket.',
+  'pr-analysis': 'Scan a pull request at its exact commits, optionally followed by an AI review. Findings are suspicions; no code is run and nothing is written to Bitbucket.',
 }
 
 /** The Bitbucket part of the dashboard: heading plus the current Bitbucket page. */
-export function BitbucketSection({ page, status, selection, navigate, onScanned, onOpenReport }: {
+export function BitbucketSection({ page, status, selection, navigate, onScanned, onOpenReport, providers = null }: {
   page: BitbucketPage
   status: Loaded<BitbucketStatus>
   selection: BitbucketSelection
   navigate: BitbucketNavigate
   onScanned: () => void
-  onOpenReport: (id: string) => void
+  onOpenReport: (id: string, page?: 'findings' | 'tests') => void
+  providers?: AIProvider[] | null
 }) {
   return (
     <section aria-label="Bitbucket">
@@ -29,7 +30,7 @@ export function BitbucketSection({ page, status, selection, navigate, onScanned,
       </div>
       {page === 'repositories' && <RepositoriesPage status={status} />}
       {page === 'pull-requests' && <PullRequestsPage status={status} selection={selection} navigate={navigate} />}
-      {page === 'pr-analysis' && <PrAnalysisPage status={status} selection={selection} navigate={navigate} onScanned={onScanned} onOpenReport={onOpenReport} />}
+      {page === 'pr-analysis' && <PrAnalysisPage status={status} selection={selection} navigate={navigate} onScanned={onScanned} onOpenReport={onOpenReport} providers={providers} />}
     </section>
   )
 }

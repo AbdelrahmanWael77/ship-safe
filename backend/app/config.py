@@ -7,6 +7,7 @@ accident.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -58,6 +59,29 @@ class BitbucketSettings:
     email: str | None = None
 
 
+#: Used when SHIPSAFE_GEMINI_MODEL is unset: Google's alias for its current stable Flash model.
+DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
+
+
+@dataclass(frozen=True)
+class GeminiSettings:
+    """Server-side Gemini API access for AI reviews. Present only when a key is set."""
+    api_key: Secret
+    model: str = DEFAULT_GEMINI_MODEL
+
+
+DEFAULT_OPENAI_MODEL = "gpt-6-luna"
+
+
+@dataclass(frozen=True)
+class OpenAISettings:
+    """Server-side OpenAI API access for AI reviews. Present only when a key is set."""
+    api_key: Secret
+    model: str = DEFAULT_OPENAI_MODEL
+    #: "minimal" | "low" | "medium" | "high"; "" sends no reasoning setting.
+    reasoning_effort: str = "low"
+
+
 @dataclass(frozen=True)
 class Settings:
     #: Where the synthetic LedgerLite repository is generated.
@@ -69,6 +93,10 @@ class Settings:
     allowed_roots: tuple[Path, ...]
     #: ``None`` unless the SHIPSAFE_BITBUCKET_* variables are set.
     bitbucket: BitbucketSettings | None = None
+    #: ``None`` unless SHIPSAFE_GEMINI_API_KEY is set.
+    gemini: GeminiSettings | None = None
+    #: ``None`` unless SHIPSAFE_OPENAI_API_KEY is set.
+    openai: OpenAISettings | None = None
 
 
 def _path(value: str | os.PathLike | None, default: Path, name: str) -> Path:
@@ -127,6 +155,51 @@ def _bitbucket(env: Mapping[str, str]) -> BitbucketSettings | None:
     )
 
 
+_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,79}$")
+
+
+def _gemini(env: Mapping[str, str]) -> GeminiSettings | None:
+    """Gemini settings, or ``None`` when no key is set. A model without a key is
+    refused so a typo cannot silently disable the feature. Messages name
+    variables only, never values."""
+    key = (env.get("SHIPSAFE_GEMINI_API_KEY") or "").strip()
+    model = (env.get("SHIPSAFE_GEMINI_MODEL") or "").strip()
+    if not key:
+        if model:
+            raise ConfigError("SHIPSAFE_GEMINI_MODEL is set but SHIPSAFE_GEMINI_API_KEY is not")
+        return None
+    if not key.isascii() or not key.isprintable() or " " in key:
+        raise ConfigError("SHIPSAFE_GEMINI_API_KEY contains whitespace or characters that cannot be sent in a header")
+    model = model.removeprefix("models/") or DEFAULT_GEMINI_MODEL
+    # The model name becomes part of the request URL path.
+    if not _MODEL_NAME.match(model):
+        raise ConfigError("SHIPSAFE_GEMINI_MODEL must be a plain model name such as gemini-flash-latest")
+    return GeminiSettings(api_key=Secret(key), model=model)
+
+
+def _openai(env: Mapping[str, str]) -> OpenAISettings | None:
+    """OpenAI settings, or ``None`` when no key is set. Same rules as Gemini."""
+    key = (env.get("SHIPSAFE_OPENAI_API_KEY") or "").strip()
+    model = (env.get("SHIPSAFE_OPENAI_MODEL") or "").strip()
+    effort = (env.get("SHIPSAFE_OPENAI_REASONING_EFFORT") or "").strip().lower()
+    if not key:
+        if model or effort:
+            raise ConfigError("SHIPSAFE_OPENAI_MODEL or SHIPSAFE_OPENAI_REASONING_EFFORT is set but SHIPSAFE_OPENAI_API_KEY is not")
+        return None
+    if not key.isascii() or not key.isprintable() or " " in key:
+        raise ConfigError("SHIPSAFE_OPENAI_API_KEY contains whitespace or characters that cannot be sent in a header")
+    model = model or DEFAULT_OPENAI_MODEL
+    if not _MODEL_NAME.match(model):
+        raise ConfigError("SHIPSAFE_OPENAI_MODEL must be a plain model name such as gpt-6-luna")
+    if effort in ("none", "off"):
+        effort = ""
+    elif not effort:
+        effort = "low"
+    elif effort not in ("minimal", "low", "medium", "high"):
+        raise ConfigError("SHIPSAFE_OPENAI_REASONING_EFFORT must be minimal, low, medium, high or none")
+    return OpenAISettings(api_key=Secret(key), model=model, reasoning_effort=effort)
+
+
 def load_settings(
     env: Mapping[str, str] | None = None, *,
     demo_root: Path | None = None, db_file: Path | None = None, allowed_root: Path | None = None,
@@ -148,4 +221,4 @@ def load_settings(
         root = _scannable_root(extra, demo_dir, "SHIPSAFE_ALLOWED_ROOT")
         if root not in roots:
             roots.append(root)
-    return Settings(demo_dir=demo_dir, db_path=db_path, allowed_roots=tuple(roots), bitbucket=_bitbucket(env))
+    return Settings(demo_dir=demo_dir, db_path=db_path, allowed_roots=tuple(roots), bitbucket=_bitbucket(env), gemini=_gemini(env), openai=_openai(env))

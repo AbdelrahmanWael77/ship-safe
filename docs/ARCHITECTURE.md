@@ -47,8 +47,10 @@ All routes are unauthenticated and intended for loopback use only. CORS allows `
 | `GET /api/scans?limit=1..100` (default 12) | 200 `ScanHistory[]` (each with `binding`), newest first | 422 |
 | `GET /api/scans/{id}` | 200 `Report` + `binding` | 404 |
 | `GET /api/scans/{id}/export` | 200 `Report` + `binding` as attachment | 404 |
-| `GET /api/scans/{id}/ai/handoff` | 200 `application/zip` | 404 |
-| `GET /api/scans/{id}/ai/context` | 200 `{scan_id, context_digest, review_count}` | 404 |
+| `GET /api/scans/{id}/ai/handoff[?acknowledge_source_sharing=true]` | 200 `application/zip` (`PACKAGE.json`, `REVIEW_INSTRUCTIONS.md`, `review-input.json`, `response-template.json`) | 404; 428 when the scan is not the synthetic demo and the acknowledgement is missing |
+| `GET /api/scans/{id}/ai/context` | 200 `{scan_id, context_digest, review_count, acknowledgement_required}` | 404 |
+
+The review package (Phase 3 task 1): `review-input.json` holds `review_context`, which starts with `source` (`provider, repository_id, pull_request_id, base_commit, head_commit, comparison` from the scan's binding, without stale state). `context_digest` is the SHA-256 of the canonical JSON of that context, so it covers the identity and exact commits. Patches and finding evidence are redacted on a best-effort basis (`[REDACTED:kind]`); a context larger than 1 MiB loses its largest patches (`diff_omitted_from_package: true`); both are stated in `limitations`. `PACKAGE.json` repeats the identity and digest and adds a per-export `package_id`.
 | `POST /api/scans/{id}/ai/reviews` | 201 saved `AIReview` | 404 · 413 over 256 KiB · 422 malformed or schema-invalid · 409 wrong scan, digest, file, or static finding ID |
 | `GET /api/scans/{id}/ai/reviews` | 200 `AIReview[]`, newest first, max 25 | 404 |
 | `GET /api/scans/{id}/ai/reviews/latest` | 200 `AIReview` or `null` | 404 |

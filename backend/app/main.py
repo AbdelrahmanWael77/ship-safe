@@ -212,20 +212,46 @@ def create_app(
             headers={"Content-Disposition": f'attachment; filename="shipsafe-{scan_id[:8]}.json"'},
         )
 
+    def review_inputs(scan_id: str) -> tuple[dict, dict]:
+        """The stored report and its binding: what the Claude package and its
+        digest are built from. The binding supplies identity and exact commits."""
+        scan = read_scan(scan_id)
+        source = scan.pop("binding")
+        return scan, source
+
+    def needs_acknowledgement(report: dict, source: dict) -> bool:
+        """True unless the scan is of the synthetic demo repository. Exporting
+        any other code requires the person to confirm they may share it."""
+        if source.get("provider") != "local-git":
+            return True
+        try:
+            return Path(report.get("repository_path") or "").resolve() != Path(demo_root).resolve()
+        except OSError:
+            return True
+
     @app.get("/api/scans/{scan_id}/ai/handoff")
-    def download_ai_handoff(scan_id: str):
-        report = read_report(scan_id)
+    def download_ai_handoff(scan_id: str, acknowledge_source_sharing: bool = False):
+        report, source = review_inputs(scan_id)
+        if needs_acknowledgement(report, source) and not acknowledge_source_sharing:
+            raise HTTPException(
+                status_code=428,
+                detail="This package contains source code that is not the synthetic demo. Confirm that you are "
+                       "allowed to share it with Claude Code (acknowledge_source_sharing=true) to export it.",
+            )
         filename = f"shipsafe-handoff-{scan_id[:8]}.zip"
         return Response(
-            content=handoff_zip(report),
+            content=handoff_zip(report, source),
             media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
         )
 
     @app.get("/api/scans/{scan_id}/ai/context")
     def get_ai_context(scan_id: str):
-        report = read_report(scan_id)
-        return {"scan_id": scan_id, "context_digest": context_digest(report), "review_count": count_reviews(scan_id)}
+        report, source = review_inputs(scan_id)
+        return {
+            "scan_id": scan_id, "context_digest": context_digest(report, source), "review_count": count_reviews(scan_id),
+            "acknowledgement_required": needs_acknowledgement(report, source),
+        }
 
     def count_reviews(scan_id: str) -> int:
         with connection() as conn:
@@ -233,7 +259,7 @@ def create_app(
 
     @app.post("/api/scans/{scan_id}/ai/reviews", status_code=201)
     async def import_ai_review(scan_id: str, request: Request):
-        report = read_report(scan_id)
+        report, source = review_inputs(scan_id)
         length = request.headers.get("content-length")
         if length and length.isdigit() and int(length) > MAX_IMPORT_BYTES:
             raise HTTPException(413, detail="Review JSON is larger than the 256 KiB import limit")
@@ -250,7 +276,7 @@ def create_app(
         except (ValueError, ValidationError, RecursionError) as exc:
             raise HTTPException(422, detail=f"Invalid Claude review JSON: {str(exc)[:700]}") from exc
         try:
-            validate_review_binding(validated, report)
+            validate_review_binding(validated, report, source)
         except ValueError as exc:
             raise HTTPException(409, detail=str(exc)) from exc
         review = saved_review(validated)

@@ -27,7 +27,7 @@ def handoff(client, scan_id):
     assert 'attachment' in response.headers['content-disposition']
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         names = set(archive.namelist())
-        assert names == {'review-input.json', 'REVIEW_INSTRUCTIONS.md', 'response-template.json'}
+        assert names == {'PACKAGE.json', 'review-input.json', 'REVIEW_INSTRUCTIONS.md', 'response-template.json'}
         source = json.loads(archive.read('review-input.json'))
         template = json.loads(archive.read('response-template.json'))
         instructions = archive.read('REVIEW_INSTRUCTIONS.md').decode()

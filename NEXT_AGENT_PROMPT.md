@@ -4,25 +4,22 @@ You are joining **ShipSafe**, an existing project, mid-implementation. The v0.2 
 
 Read `AGENTS.md`, `CLAUDE.md`, and the checkpoint at the top of `docs/IMPLEMENTATION_STATUS.md`. Verify the state below against `git status`, `git log`, and the tests before trusting it.
 
-**Current phase:** 2 — Bitbucket repositories and pull requests (`prompts/PHASE-02-BITBUCKET.md`).
+**Current phase:** 3 — Claude Code review (`prompts/PHASE-03-CLAUDE-REVIEW.md`), started by owner decision while **Phase 2 is still open**.
 
-**State (2026-11-13):** P2 tasks 1–4 (backend) are committed. P2 task 5 (frontend screens) is code-complete, tested and committed on `feat/p2-frontend-pr-screens` (local only). Never push or merge without the owner.
+**Phase 2 open items (owner-run):** task 6, the read-only live Bitbucket smoke test (the owner is preparing credentials in the root `.env`, which is git-ignored and already has the empty variable names), and a browser walk-through of the Bitbucket screens (`cd frontend && npm run dev:mock`, with the backend running on port 8000). Record PASS / FAIL / BLOCKED in the checkpoint and `docs/ACCEPTANCE_MATRIX.md` when the owner reports. Never ask for a token in chat; never read or print the values in `.env`.
 
-**Task 5 files:** `frontend/src/bitbucket/PullRequestsPage.tsx`, `PrAnalysisPage.tsx`, `mock.ts` (each with a `.test.tsx`), `BitbucketSection.tsx`, `client.ts`, `pages.ts`, `ErrorPanel.tsx`, `frontend/src/components.tsx` (moved out of `App.tsx`), `App.tsx`, `App.test.tsx`, `bitbucket.css`, `test/fixtures.ts`, `frontend/package.json` (`dev:mock`), `README.md`, `docs/ACCEPTANCE_MATRIX.md`, and the two status files.
+**Branches (all local, nothing pushed):** `feat/p2-frontend-pr-screens` at `74661f4` (P2 task 5, committed with approval). `feat/p3-review-package`, cut from it: **Phase 3 task 1 is done and uncommitted in the working tree.** Do not discard it. Commit only when the owner says so.
 
-**What works (jsdom tests, stubbed `fetch`):** sidebar BITBUCKET group → Repositories, Pull requests (repository picker, state filter, search, truncated notice) → Analyze → PR analysis: the scan sends the `head_commit` on screen; 409 `head_changed` reloads the pull request; the report shows bound full SHAs, a Current / Stale / Not checked badge, findings, diff, Open in Bitbucket; stored scans can be viewed and opened in the existing dashboard pages; the scan history marks pull request scans. `npm run dev:mock` is development-only invented data with a permanent MOCK DATA banner; none of it is in the production bundle.
+**Phase 3 task 1 (done):** review package with identity and exact commits under the digest, `PACKAGE.json` manifest, best-effort secret redaction, 1 MiB limit with marked omissions, HTTP 428 without `acknowledge_source_sharing=true` for non-demo scans, confirmation checkbox on the Claude Review page. Files: `backend/app/ai_handoff.py`, `backend/app/main.py`, `backend/tests/test_review_package.py`, `test_bitbucket_api.py`, `test_ai_handoff.py`, `frontend/src/App.tsx`, `App.test.tsx`, `bitbucket.css`, docs.
 
-**Tests last run (2026-11-13, Windows 11, Node 24.22.2):**
-- `cd frontend && npm test` → 100 passed (7 files); `npm run build` → ✓; `npm audit` → 0
-- `cd backend && ..\.venv\Scripts\python -m pytest -q` → 236 passed, 1 warning (about 6 minutes on Windows)
+**Tests last run (2026-11-13, Windows 11):**
+- `cd backend && ..\.venv\Scripts\python -m pytest -q` → 257 passed, 1 warning (about 7 minutes)
+- `cd frontend && npm test` → 103 passed (7 files); `npm run build` → ✓
 
-**NOT TESTED:** the new screens in a real browser; narrow screens; live Bitbucket (no request has ever gone to `api.bitbucket.org`; payload shapes come from Bitbucket's published API description).
+**Next atomic task — Phase 3 task 2 (review prompt/schema):** add review schema `shipsafe.ai-review.v2` in `backend/app/ai_handoff.py`: each finding gets an `id`, a fixed `status: "suspected"`, `suggested_validation`, optional `proposed_patch` (stored as text, never applied), and the review gets `missing_context`; the review echoes `source` (repository, pull request, head commit) so task 3 can reject a wrong commit. Keep accepting v1 imports. Update `instructions()` and `response-template.json` to cover security, authorization, API compatibility, money/data integrity, validation, exception handling, affected modules and missing tests, and to forbid claims of executed commands or tests. Update `frontend/src/types.ts` and the review cards only as far as needed to show the new fields as UNVERIFIED. Tests: round trip for a local and a mocked Bitbucket scan, v1 still accepted, fabricated `verified` / test-result fields rejected.
 
-**Immediate next action:**
-1. Owner review of the task 5 commit.
-2. Browser walk-through: `cd frontend && npm run dev:mock` (Pull requests → Analyze #101 → scan; #106 head-changed reload; #104 fork refusal; #105 oversized diff), then `python scripts\dev.py` for the demo and the "Bitbucket is not configured" state. Fix what the walk-through shows; record the result.
-3. **P2 task 6:** human-run read-only live smoke test with approved credentials in the server's local `.env` only. Record PASS or BLOCKED and any payload difference in `docs/IMPLEMENTATION_STATUS.md` and `docs/ACCEPTANCE_MATRIX.md`. Never ask for a token in chat; never put one in a `VITE_*` variable.
+**Decisions to keep:** the context digest covers the identity, so packages exported before task 1 are refused on import (deliberate). Stale state is never part of the package or digest. Unknown acknowledgement state in the UI is treated as "required". No Claude API key, no Claude subprocess, no automatic patch execution.
 
-**Known limits:** a large scan has no progress report; stale state on lists is checked for at most 20 scanned pull requests; a version 2 database is refused by older branches. Do not start Phase 3 until the Phase 2 gates are reviewed.
+**NOT TESTED:** a real Claude Code session (only synthetic JSON fixtures); live Bitbucket; any screen in a real browser.
 
 Keep your reply under six lines. Do not claim success without checking.

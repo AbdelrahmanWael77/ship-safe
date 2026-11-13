@@ -83,6 +83,8 @@ export default function App() {
   const [aiReviews, setAIReviews] = useState<AIReview[]>([])
   const [aiFile, setAIFile] = useState<File | null>(null)
   const [importingAI, setImportingAI] = useState(false)
+  const [shareAckRequired, setShareAckRequired] = useState(true)
+  const [shareAck, setShareAck] = useState(false)
   const [bitbucketSelection, setBitbucketSelection] = useState<BitbucketSelection>(INITIAL_SELECTION)
   const bitbucketNavigate: BitbucketNavigate = (next, change) => {
     if (change) setBitbucketSelection(previous => ({ ...previous, ...change }))
@@ -129,6 +131,12 @@ export default function App() {
       .then(rows => { if (active) setAIReviews(rows) })
       .catch(exc => { if (active) setError(exc instanceof Error ? exc.message : String(exc)) })
     setAIFile(null)
+    // Whether exporting this scan's source code needs an explicit confirmation.
+    // Unknown (request failed, older backend) is treated as "needed".
+    setShareAck(false); setShareAckRequired(true)
+    api<{ acknowledgement_required?: boolean }>(`/api/scans/${scanID}/ai/context`)
+      .then(context => { if (active) setShareAckRequired(context.acknowledgement_required !== false) })
+      .catch(() => undefined)
     return () => { active = false }
   }, [report?.id])
 
@@ -276,7 +284,7 @@ export default function App() {
               <Pill kind="demo">NO API KEY IN SHIPSAFE</Pill>
             </div>
             <div className="ai-steps">
-              <div className="panel ai-step"><div className="ai-step-top"><span className="ai-step-num">01</span><FileArchive size={19}/></div><h3>Export review package</h3><p>Download Git evidence, the structured JSON response template, and review instructions for scan <code>{report.id.slice(0, 8)}</code>.</p><a className="secondary-button ai-action" href={`${API}/api/scans/${report.id}/ai/handoff`} download><Download size={16}/> Download handoff ZIP</a></div>
+              <div className="panel ai-step"><div className="ai-step-top"><span className="ai-step-num">01</span><FileArchive size={19}/></div><h3>Export review package</h3><p>Download Git evidence, the structured JSON response template, and review instructions for scan <code>{report.id.slice(0, 8)}</code>.</p>{shareAckRequired && <label className="ai-share-ack"><input type="checkbox" checked={shareAck} onChange={e => setShareAck(e.target.checked)}/><span>This package contains source code that is not the synthetic demo. I am allowed to share it with Claude Code, and I will check it for secrets first (redaction is best-effort).</span></label>}{shareAckRequired && !shareAck ? <button className="secondary-button ai-action" disabled><Download size={16}/> Download handoff ZIP</button> : <a className="secondary-button ai-action" href={`${API}/api/scans/${report.id}/ai/handoff${shareAckRequired ? '?acknowledge_source_sharing=true' : ''}`} download><Download size={16}/> Download handoff ZIP</a>}</div>
               <div className="panel ai-step"><div className="ai-step-top"><span className="ai-step-num">02</span><Terminal size={19}/></div><h3>Review in Claude Code</h3><p>Extract the ZIP. Open a terminal in the extracted folder, run <code>claude</code>, and ask it to read the instructions and write <code>claude-review.json</code>.</p><div className="ai-command"><code>claude</code><button title="Copy CLI instruction" onClick={() => { void navigator.clipboard.writeText('Read REVIEW_INSTRUCTIONS.md and review-input.json in this directory. Follow the instructions and write claude-review.json. Do not run code or modify any other files.') ; setNotice('Copied instructions for Claude Code.') }}><Copy size={15}/></button></div></div>
               <div className="panel ai-step"><div className="ai-step-top"><span className="ai-step-num">03</span><UploadCloud size={19}/></div><h3>Import the JSON result</h3><p>Inspect Claude's output before importing. The backend checks its schema, scan ID, context digest, and referenced files.</p><label className="ai-file-label"><input type="file" accept=".json,application/json" onChange={e => setAIFile(e.target.files?.[0] || null)}/><UploadCloud size={15}/>{aiFile ? aiFile.name : 'Choose claude-review.json'}</label><button className="primary-button ai-action" disabled={!aiFile || importingAI} onClick={importAIReview}>{importingAI ? <RefreshCw size={16} className="spin"/> : <Check size={16}/>} {importingAI ? 'Importing…' : 'Import review'}</button></div>
             </div>

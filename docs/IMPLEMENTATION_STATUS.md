@@ -5,8 +5,22 @@
 Rules: `AGENTS.md` and `CLAUDE.md`. Handoff prompt: `NEXT_AGENT_PROMPT.md`.
 
 - **Roadmap:** `prompts/PHASE-01-FOUNDATION.md` … `PHASE-05-FINAL-VALIDATION.md`; gates in `docs/ACCEPTANCE_MATRIX.md`
-- **Current phase:** 2 — Bitbucket repositories and pull requests (`prompts/PHASE-02-BITBUCKET.md`)
+- **Current phase:** 3 — Claude Code review (`prompts/PHASE-03-CLAUDE-REVIEW.md`), started 2026-11-13 by owner decision **while Phase 2 is still open**: Phase 2 task 6 (live Bitbucket smoke test) and a browser walk-through are NOT TESTED and its gates are not signed off. Phase 2 is not complete.
 - **Last updated:** 2026-11-13
+
+### Phase 3 task list (order; one task at a time)
+1. [x] Trusted identity + minimal review package (**uncommitted** on `feat/p3-review-package`, cut from `74661f4`)
+2. [ ] Claude Code review prompt/schema (finding ID, suspected status, suggested validation, optional patch, missing context) — next
+3. [ ] Strict import and history (repository / PR / head SHA checks, duplicate imports, review stale when the PR head moves)
+4. [ ] Functional UX (AI vs static side by side, previous reviews, stale warning)
+5. [ ] Operating model documentation for the Team subscription
+
+### Phase 3 task 1 — done 2026-11-13 (Windows 11, Python from `.venv`, Node 24.22.2)
+- **What changed:** the review package (`GET /api/scans/{id}/ai/handoff`) now carries `review_context.source` (provider, repository, pull request, full base and head commits, comparison) and the context digest covers it; a `PACKAGE.json` manifest (format `shipsafe.review-package.v2`, new package id per export, digest, incomplete / omitted / truncated counts); best-effort secret redaction of patches and finding evidence, reported as a limitation; a 1 MiB context limit that drops the largest patches and marks them; HTTP 428 unless `acknowledge_source_sharing=true` for any scan that is not the synthetic demo; `GET …/ai/context` adds `acknowledgement_required`. The dashboard's Claude Review page shows a confirmation checkbox when required (also when it cannot tell).
+- **Contract change (deliberate):** the context digest of every scan changed because it now includes the identity. A package exported before this change is refused on import (409, "export a fresh handoff bundle"). Review JSON schema is still `shipsafe.ai-review.v1`.
+- **Files:** `backend/app/ai_handoff.py`, `backend/app/main.py`, `backend/tests/test_review_package.py` (new, 19 tests), `test_bitbucket_api.py` (one test replaced by three, one call updated), `test_ai_handoff.py` (ZIP now has 4 entries), `frontend/src/App.tsx`, `App.test.tsx` (3 tests), `bitbucket.css`, `docs/ARCHITECTURE.md`, `docs/CLAUDE-CODE-HANDOFF.md`.
+- **Tests:** `cd backend && ..\.venv\Scripts\python -m pytest -q` → 257 passed, 1 warning; `cd frontend && npm test` → 103 passed (7 files); `npm run build` → ✓.
+- **Limits / NOT TESTED:** only synthetic JSON fixtures were imported; no real Claude Code session was run. Redaction is pattern-based and will miss secrets it has no pattern for. The package id is not stored. Bitbucket evidence is mocked HTTP only. Not viewed in a browser.
 - **Branch / latest commit:** (remote state verified with `git ls-remote origin` on 2026-11-13)
   - GitHub has **no `main` branch**. The default and integration branch is `feat/p1-foundation`, at `98c9d92`, which is the merge of pull request #1 (`feat/p2-bitbucket-provider`, P2 task 1). The rule files name it accordingly.
   - On GitHub, stacked on `08b3b1b`, none merged: `feat/p2-bitbucket-settings` (`ebc9068`, task 2) → `feat/p2-migration-2` (`82d14ed`, task 3) → `feat/p2-bitbucket-api` (`790b293`, task 4). Pushed by the owner on 2026-11-12.

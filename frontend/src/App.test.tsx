@@ -207,3 +207,31 @@ describe('pull requests in the dashboard', () => {
     expect(screen.queryByText('BITBUCKET · READ-ONLY')).not.toBeInTheDocument()
   })
 })
+
+describe('Claude review package export', () => {
+  const openReview = async () => { await userEvent.click(primaryNav().getByRole('button', { name: /Claude Review/ })) }
+  const context = (required: boolean) => ({ [`/api/scans/${report.id}/ai/context`]: { body: { scan_id: report.id, context_digest: '0'.repeat(64), review_count: 0, acknowledgement_required: required } } })
+
+  test('the synthetic demo exports without a confirmation', async () => {
+    await start(context(false))
+    await openReview()
+    const link = await screen.findByRole('link', { name: /Download handoff ZIP/ })
+    expect(link).toHaveAttribute('href', `/api/scans/${report.id}/ai/handoff`)
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+  })
+
+  test.each([
+    ['the API says a confirmation is required', context(true)],
+    ['the API cannot say (request fails)', {}],
+  ])('no download until source sharing is confirmed when %s', async (_name, routes) => {
+    await start(routes)
+    await openReview()
+    const box = await screen.findByRole('checkbox')
+    expect(screen.getByRole('button', { name: /Download handoff ZIP/ })).toBeDisabled()
+    expect(screen.queryByRole('link', { name: /Download handoff ZIP/ })).not.toBeInTheDocument()
+
+    await userEvent.click(box)
+    expect(screen.getByRole('link', { name: /Download handoff ZIP/ })).toHaveAttribute('href', `/api/scans/${report.id}/ai/handoff?acknowledge_source_sharing=true`)
+    expect(document.querySelector('.alert-error')).toBeNull()
+  })
+})

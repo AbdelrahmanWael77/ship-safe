@@ -79,3 +79,6 @@
 .mock-banner{background:#5a3c08;border-bottom:1px solid #a8741c;color:#ffe2ad;font-size:11.5px;padding:8px 22px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .mock-banner strong{background:#fbc579;color:#2b1c02;border-radius:5px;padding:2px 7px;font-size:10px;letter-spacing:.6px}
 .bb-source code{word-break:break-all}
+.ai-share-ack{display:flex;gap:9px;align-items:flex-start;font-size:11px;line-height:1.55;color:#fbc579;margin:10px 0}
+.ai-share-ack input{margin-top:2px;flex:none}
+.ai-action:disabled{opacity:.5;cursor:default}

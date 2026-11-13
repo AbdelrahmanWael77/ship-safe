@@ -5,7 +5,7 @@ This document describes the **local, human-operated** integration. No AI API key
 ## The workflow
 
 1. ShipSafe scans a trusted local Git repo and persists the static scan.
-2. `GET /api/scans/{scan_id}/ai/handoff` returns a ZIP containing the scan context, prompt and response template.
+2. `GET /api/scans/{scan_id}/ai/handoff` returns a ZIP containing the scan context, prompt, response template and a `PACKAGE.json` manifest. The context names the repository, pull request and exact base and head commits, and the digest covers them. For any scan that is not the synthetic demo, the export requires an explicit confirmation that the source code may be shared (`acknowledge_source_sharing=true`; a checkbox in the dashboard). Secret-looking values are replaced on a best-effort basis only: always inspect `review-input.json` before sharing it.
 3. The **human reviewer** extracts it, authenticates in their existing Claude Code session (`claude`), and asks Claude to produce `claude-review.json`.
 4. Reviewer checks the JSON and imports it via ShipSafe's dashboard.
 5. The backend validates the JSON schema, scan UUID, SHA-256 context digest, and references to changed files and stored static finding IDs.

@@ -9,10 +9,19 @@ from pathlib import Path
 from uuid import uuid4
 
 from .errors import ScanError
+from .pattern_rules import (
+    ENGINE as PATTERN_ENGINE, MAX_FILE_CHARS as MAX_PATTERN_FILE_CHARS, RULES as PATTERN_RULES, SOURCE as PATTERN_SOURCE,
+    analyze_patterns, is_test_path, language_of,
+)
 from .providers.base import MAX_CHANGED_FILES, ChangeProvider, ChangeSet, RepositoryRef, valid_ref
 from .providers.local_git import LocalGitProvider, run_git as git
 
 __all__ = ["ScanError", "git", "valid_ref", "scan_changes", "scan_repository", "analyze_risks"]
+
+#: Changed files the pattern rules read in one scan. Each is up to two reads
+#: (base and head), which are HTTP requests for a Bitbucket scan; files beyond
+#: the limit are reported as skipped.
+MAX_PATTERN_FILES = 60
 
 #: Lines of each file's patch kept in a stored report.
 PATCH_PREVIEW_LINES = 140
@@ -231,6 +240,9 @@ def scan_change_set(
     base_sha, head_sha = changes.base_sha, changes.head_sha
     files = []
     findings = []
+    # Pattern rules (Dart, JS/TS, Kotlin, Java): which files they read, and which
+    # they could not, so a report never implies a file was checked when it was not.
+    pattern_read, pattern_skipped = 0, 0
     for delta in changes.files:
         path, status = delta.path, delta.status
         is_python = path.endswith(".py")
@@ -238,6 +250,23 @@ def scan_change_set(
         after = provider.read_file(repository, head_sha, path) if status != "D" and is_python else ""
         functions = py_functions(after, _changed_new_lines(delta.patch)) if is_python else []
         findings.extend(analyze_risks(path, before, after, delta.patch))
+        if language_of(path) and not is_test_path(path):
+            if pattern_read >= MAX_PATTERN_FILES:
+                pattern_skipped += 1
+            else:
+                try:
+                    old = provider.read_file(repository, base_sha, path) if status != "A" else ""
+                    new = provider.read_file(repository, head_sha, path) if status != "D" else ""
+                except ScanError:
+                    # A file that cannot be read (binary, too large, gone) is reported as
+                    # not analysed. It must not fail a scan that worked before these rules.
+                    pattern_skipped += 1
+                else:
+                    if len(old) > MAX_PATTERN_FILE_CHARS or len(new) > MAX_PATTERN_FILE_CHARS:
+                        pattern_skipped += 1
+                    else:
+                        pattern_read += 1
+                        findings.extend(analyze_patterns(path, old, new, delta.patch))
         diff, diff_lines_omitted = _preview(delta.patch)
         files.append({
             "path": path, "status": status, "additions": delta.additions, "deletions": delta.deletions,
@@ -245,7 +274,12 @@ def scan_change_set(
             "diff_truncated": diff_lines_omitted > 0, "diff_lines_omitted": diff_lines_omitted,
         })
     severities = {"critical": 42, "high": 26, "medium": 12, "low": 4}
-    risk_score = min(99, sum(severities[f["severity"]] for f in findings) + (3 if files else 0))
+    # The score is built from the Python heuristics only, exactly as before.
+    # Pattern-rule findings are counted and listed but not scored (owner decision,
+    # Phase 7): their precision has not yet been checked on real changes.
+    scored = [f for f in findings if f.get("source") != PATTERN_SOURCE]
+    pattern_findings = len(findings) - len(scored)
+    risk_score = min(99, sum(severities[f["severity"]] for f in scored) + (3 if files else 0))
     if findings:
         level = "Critical review required" if any(f["severity"] == "critical" for f in findings) else "Review required"
     elif files:
@@ -286,6 +320,14 @@ def scan_change_set(
         "test_suggestions": test_suggestions,
         "disclaimer": "Heuristic static analysis only. Findings are suspected risks, not confirmed failures. No repository code or tests were executed.",
     }
+    if pattern_read or pattern_skipped:
+        # Present only when the change has files the pattern rules can read, so a
+        # Python-only report keeps its exact earlier shape.
+        report["summary"]["pattern_rules"] = {
+            "engine": PATTERN_ENGINE, "rule_count": len(PATTERN_RULES),
+            "files_analysed": pattern_read, "files_skipped": pattern_skipped,
+            "finding_count": pattern_findings, "in_risk_score": False,
+        }
     if import_files_skipped:
         # affected_modules is incomplete: say so in the report itself, so the
         # dashboard, the export and the Claude handoff all carry it.

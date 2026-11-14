@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, ArrowLeft, ArrowRight, ArrowUpRight, ChevronDown, ExternalLink, FlaskConical, GitCommitHorizontal, GitPullRequest, Info, RefreshCw, ScanSearch, ShieldAlert, Sparkles } from 'lucide-react'
 import { api, isApiError } from '../api'
+import { isUnanalysed } from '../patternRules'
 import { PROVIDER_COMPANY, reviewOrigin, runModelReview, usageText } from '../aiReview'
 import { DiffViewer, FileIcon, FindingCard, Pill, Severity } from '../components'
 import type { AIProvider, AIProviderName, AIReview, BitbucketStatus, PullRequestDetail, Report } from '../types'
@@ -312,7 +313,7 @@ export function PrAnalysisPage({ status, selection, navigate, onScanned, onOpenR
           {report.findings.length ? (
             <div className="findings-grid">{report.findings.map(finding => <FindingCard key={finding.id} finding={finding} onOpenFile={openFile} />)}</div>
           ) : (
-            <div className="panel"><div className="empty-state"><h3>No static findings</h3><p>{report.files.some(file => !file.path.endsWith('.py')) ? 'Static rules cover Python files only; the other changed files were not analysed by them. Use the AI review below.' : 'Static analysis found no known patterns in this diff; that does not establish safety.'}</p></div></div>
+            <div className="panel"><div className="empty-state"><h3>No static findings</h3><p>{report.files.some(file => isUnanalysed(file.path)) ? 'The static rules read Python, Dart, JavaScript/TypeScript, Kotlin and Java files; the other changed files were not analysed by them. Use the AI review below.' : 'Static analysis found no known patterns in this diff; that does not establish safety.'}</p></div></div>
           )}
 
           {!report.mock && (

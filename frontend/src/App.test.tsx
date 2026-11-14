@@ -7,7 +7,7 @@ import userEvent from '@testing-library/user-event'
 import App from './App'
 import { networkDown, stubApi } from './test/api'
 import type { Routes } from './test/api'
-import type { AIReview } from './types'
+import type { AIReview, Report } from './types'
 import { SCAN_ID, demoHistory, demoReport, demoRoutes, pullRequestDetail, pullRequestHistoryItem, pullRequestScanReport, pullRequestsBeforeScan, repositories, statusConfigured, statusNotConfigured, storedScanReport } from './test/fixtures'
 
 const STATUS = '/api/bitbucket/status'
@@ -627,6 +627,16 @@ describe('AI review results on Risk findings and Test intelligence', () => {
   /** The demo report, but as a change to Dart files with no static findings. */
   const dartReport = () => ({ ...report, findings: [], test_suggestions: [], summary: { ...report.summary, finding_count: 0 },
     files: report.files.map((file, index) => ({ ...file, path: `lib/feature_${index}.dart` })) })
+  // A language no static rule reads (the pattern rules read Dart, JS/TS, Kotlin and Java).
+  const swiftReport = () => ({ ...dartReport(), files: dartReport().files.map(file => ({ ...file, path: file.path.replace('.dart', '.swift') })) })
+  const patternFinding = (): Report['findings'][number] => ({
+    id: 'p1', category: 'Security', severity: 'critical', title: 'TLS certificate or host validation disabled', file: 'lib/feature_0.dart', line: 5,
+    status: 'suspected', evidence: 'client.badCertificateCallback = (cert, host, port) => true;',
+    explanation: 'The change adds code that accepts any certificate. This is a line-pattern suspicion, not a confirmed defect.',
+    recommendation: 'Remove the bypass.', source: 'pattern-rules', rule_id: 'shipsafe.tls-validation-disabled', language: 'dart' })
+  const dartWithFinding = (): Report => ({ ...dartReport(), findings: [patternFinding()],
+    summary: { ...dartReport().summary, finding_count: 1, risk_score: 3,
+      pattern_rules: { engine: 'builtin-line-patterns', rule_count: 8, files_analysed: dartReport().files.length, files_skipped: 0, finding_count: 1, in_risk_score: false } } })
   const go = (name: RegExp) => userEvent.click(primaryNav().getByRole('button', { name }))
 
   test('Risk findings lists the AI review findings apart from the static ones, labelled unverified', async () => {
@@ -658,14 +668,46 @@ describe('AI review results on Risk findings and Test intelligence', () => {
   })
 
   test('a non-Python change says the static rules did not analyse it instead of "no risk patterns"', async () => {
-    await start({ [`/api/scans/${report.id}`]: { body: dartReport() } })
+    await start({ [`/api/scans/${report.id}`]: { body: swiftReport() } })
     await go(/Risk findings/)
     expect(await screen.findByRole('heading', { name: 'No static findings' })).toBeVisible()
-    expect(screen.getByText(/Static rules cover Python files only: \d+ of \d+ changed files? \(\.dart\)/)).toBeVisible()
+    expect(screen.getByText(/The static rules read Python, Dart, JavaScript\/TypeScript, Kotlin and Java files: \d+ of \d+ changed files? \(\.swift\)/)).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'No risk patterns detected' })).not.toBeInTheDocument()
     await go(/Test intelligence/)
-    expect(await screen.findByText(/Static rules cover Python files only/)).toBeVisible()
+    expect(await screen.findByText(/The static rules read Python, Dart, JavaScript\/TypeScript, Kotlin and Java files/)).toBeVisible()
   })
+  test('a Dart change with a pattern-rule finding: counted, labelled with its rule, and kept out of the score', async () => {
+    await start({ [`/api/scans/${report.id}`]: { body: dartWithFinding() } })
+    const card = (title: string) => screen.getByText(title, { selector: '.stat-label' }).closest('.stat-card') as HTMLElement
+    expect(within(card('Static findings')).getByText('1')).toBeVisible()
+    expect(card('Static findings')).toHaveTextContent(/1 from pattern rules in \d+ files? · suspected · not in the score/)
+    expect(screen.getByLabelText('Static score not applicable')).toHaveTextContent('N/A')
+    expect(screen.getByText(/1 pattern-rule finding is listed under Risk findings and not included in this score\./)).toBeVisible()
+    expect(screen.getByRole('status', { name: 'At a glance' })).toHaveTextContent('1 possible problem found')
+    expect(screen.getByRole('status', { name: 'At a glance' })).toHaveTextContent('1 from the static rules')
+
+    await go(/Risk findings/)
+    const finding = (await screen.findByRole('heading', { name: 'TLS certificate or host validation disabled' })).closest('.finding-card') as HTMLElement
+    expect(finding).toHaveTextContent('Pattern rule · tls-validation-disabled · dart · not in the score')
+    expect(finding).toHaveTextContent('Unverified suspicion')
+    expect(within(finding).getByRole('button', { name: /lib\/feature_0\.dart:5/ })).toBeVisible()
+    expect(screen.queryByText(/were not analysed by them|was not analysed by them/)).not.toBeInTheDocument()
+  })
+
+  test('a Dart change the pattern rules read and found nothing in is not "Not checked yet"', async () => {
+    await start({ [`/api/scans/${report.id}`]: { body: dartReport() } })
+    const glance = await screen.findByRole('status', { name: 'At a glance' })
+    expect(glance).toHaveTextContent('No static pattern flagged · no AI review yet')
+    expect(glance).toHaveTextContent('They cover a small set of patterns')
+    expect(glance).not.toHaveTextContent('Not checked yet')
+    const card = screen.getByText('Static findings', { selector: '.stat-label' }).closest('.stat-card') as HTMLElement
+    expect(within(card).getByText('0')).toBeVisible()
+    expect(card).toHaveTextContent(/0 from pattern rules in \d+ files?/)
+    expect(screen.getByLabelText('Static score not applicable')).toHaveTextContent('N/A')  // pattern findings are never scored
+    await go(/Risk findings/)
+    expect(await screen.findByRole('heading', { name: 'No risk patterns detected' })).toBeVisible()
+  })
+
   test('Overview names who wrote the AI review: an AI model, or a manual Claude Code import', async () => {
     const model: AIReview = { ...aiReview(), source: 'openai_api_generated_unverified',
       generator: { provider: 'openai', model: 'gpt-6-luna' } as AIReview['generator'] }
@@ -683,7 +725,7 @@ describe('AI review results on Risk findings and Test intelligence', () => {
   })
 
   test('Overview of a change the static rules cannot read and no AI review: "Not checked yet", N/A instead of 0', async () => {
-    await start({ [`/api/scans/${report.id}`]: { body: dartReport() } })
+    await start({ [`/api/scans/${report.id}`]: { body: swiftReport() } })
     const glance = await screen.findByRole('status', { name: 'At a glance' })
     expect(glance).toHaveTextContent('Not checked yet')
     expect(glance).toHaveTextContent(/(was|were) not checked\. Run an AI review/)

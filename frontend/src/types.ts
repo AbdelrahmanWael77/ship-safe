@@ -29,8 +29,14 @@ export interface Finding {
   evidence: string;
   explanation: string;
   recommendation: string;
+  /** Present only on pattern-rule findings (Phase 7). Absent on the Python heuristics. */
+  source?: 'pattern-rules';
+  rule_id?: string;
+  language?: string;
 }
 export interface ScanSummary {
+  /** Present only when the change has files the pattern rules can read. Their findings are counted, not scored. */
+  pattern_rules?: { engine: string; rule_count: number; files_analysed: number; files_skipped: number; finding_count: number; in_risk_score: false };
   files_changed: number;
   lines_added: number;
   lines_removed: number;

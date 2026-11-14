@@ -49,6 +49,8 @@ export function FindingCard({ finding, onOpenFile }: { finding: Finding; onOpenF
     <p className="finding-description">{finding.explanation}</p>
     <div className="evidence"><div className="micro-label"><Terminal size={13}/> Code evidence</div><code>{finding.evidence}</code></div>
     <div className="recommendation"><span><Sparkles size={15}/> Suggested next step</span><p>{finding.recommendation}</p></div>
-    <div className="finding-bottom"><Pill kind="muted"><CircleHelp size={12}/> Unverified suspicion</Pill><span>Static analysis</span></div>
+    <div className="finding-bottom"><Pill kind="muted"><CircleHelp size={12}/> Unverified suspicion</Pill>{finding.source === 'pattern-rules'
+      ? <span title="A line pattern matched this change. Counted as a static finding; not part of the risk score.">Pattern rule · <code>{(finding.rule_id ?? '').replace(/^shipsafe\./, '')}</code>{finding.language ? ` · ${finding.language}` : ''} · not in the score</span>
+      : <span>Static analysis</span>}</div>
   </div>
 }
